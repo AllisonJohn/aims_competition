@@ -45,3 +45,6 @@ data/cache/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# 
+/competition/data/
