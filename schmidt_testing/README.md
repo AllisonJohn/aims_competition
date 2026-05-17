@@ -48,6 +48,9 @@ pw auth apikey
 
 Paste your Parallel Works API key when prompted.
 
+How to get your API key:
+Click on your name in the top right corner and click: Account --> Authentication --> API Keys, then create your API key. Make sure to save it somewhere.
+
 Confirm authentication:
 
 ```bash
