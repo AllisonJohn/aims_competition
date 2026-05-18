@@ -1,3 +1,7 @@
+import math
+import numbers
+from collections.abc import Callable, Iterable
+
 from datasets import Features, Value, load_dataset
 from huggingface_hub import HfApi
 
@@ -95,6 +99,61 @@ def load_responses(
     )
 
 
+def benchmark_id_from_response_file(response_file: str) -> str:
+    """Return the benchmark ID implied by a response parquet filename."""
+    suffix = ".parquet"
+    return response_file[:-len(suffix)] if response_file.endswith(suffix) else response_file
+
+
+DEFAULT_SPLIT_RATIOS = (0.75, 0.125, 0.125)
+
+
+def split_response_files_by_benchmark(
+    response_files: list[str],
+    split_index: int = 0,
+    split_ratios: tuple[float, float, float] = DEFAULT_SPLIT_RATIOS,
+) -> dict[str, list[str]]:
+    """Split response files into train/validation/test by whole benchmark.
+
+    The competition hidden set is best approximated by holding out complete
+    benchmarks, not random rows. Ratios are converted into benchmark counts by
+    rounding train and validation counts, then assigning test the remaining
+    files. Slicing the rotated file list keeps the splits non-overlapping.
+    """
+    if len(response_files) < 3:
+        raise ValueError("Need at least 3 response files to make train/validation/test splits.")
+
+    train_ratio, validation_ratio, test_ratio = split_ratios
+    if train_ratio < 0 or validation_ratio < 0 or test_ratio < 0:
+        raise ValueError("split ratios must be non-negative.")
+    ratio_total = train_ratio + validation_ratio + test_ratio
+    if not math.isclose(ratio_total, 1.0, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError("split ratios must sum to 1.0.")
+
+    files = sorted(response_files)
+    n_files = len(files)
+    offset = split_index % n_files
+    files = files[offset:] + files[:offset]
+
+    train_count = round(n_files * train_ratio)
+    validation_count = round(n_files * validation_ratio)
+    train_count = max(0, min(train_count, n_files))
+    validation_count = max(0, min(validation_count, n_files - train_count))
+
+    train_end = train_count
+    validation_end = train_end + validation_count
+
+    train = files[:train_end]
+    validation = files[train_end:validation_end]
+    test = files[validation_end:]
+
+    return {
+        "train": train,
+        "validation": validation,
+        "test": test,
+    }
+
+
 def render_subject_content(subject, fallback_subject_id):
     """Convert a subject registry row into hosted-runtime subject text.
 
@@ -138,6 +197,7 @@ def to_training_example(row, registries: dict):
     benchmark_id = benchmark.get("benchmark_id") or row["benchmark_id"]
 
     return {
+        "model_id": row["subject_id"],
         "benchmark": benchmark_id,
         "condition": row["test_condition"] or "none",
         "subject_content": render_subject_content(subject, row["subject_id"]),
@@ -231,10 +291,170 @@ def get_training_data(
     }
 
 
+def load_split_data(
+    split: str | None = None,
+    split_index: int = 0,
+    split_ratios: tuple[float, float, float] = DEFAULT_SPLIT_RATIOS,
+):
+    """Return benchmark-disjoint train/validation/test data.
+
+    Args:
+        split: Optional split name. Use ``None`` to return all three splits as
+            ``(train_data, validation_data, test_data)``, or pass one of
+            ``"train"``, ``"validation"``, or ``"test"`` to return only that
+            split.
+        split_index: Rotates which complete benchmarks are held out.
+        split_ratios: Train/validation/test benchmark ratios. For example,
+            ``(0.8, 0.0, 0.2)`` uses about 80% of benchmarks for training, no
+            validation split, and the remaining benchmarks for testing.
+
+    Returns:
+        Either one split dict or a tuple of three split dicts. Each split dict
+        contains metadata, benchmark IDs, response files, and a lazy
+        ``examples`` iterator of joined examples. A zero-ratio split returns
+        ``None``.
+    """
+    selected_split = split.strip().lower() if split is not None else None
+    valid_splits = {"train", "validation", "test"}
+    if selected_split is not None and selected_split not in valid_splits:
+        raise ValueError("split must be one of: train, validation, test.")
+
+    response_files = get_response_files(repo_id=REPO_ID)
+    split_files = split_response_files_by_benchmark(
+        response_files=response_files,
+        split_index=split_index,
+        split_ratios=split_ratios,
+    )
+    registries = load_registries(repo_id=REPO_ID)
+
+    def build_split(split_name: str) -> dict | None:
+        selected_files = split_files[split_name]
+        if not selected_files:
+            return None
+        return {
+            "repo_id": REPO_ID,
+            "split": split_name,
+            "split_index": split_index,
+            "split_ratios": split_ratios,
+            "num_response_files": len(response_files),
+            "response_files": selected_files,
+            "benchmark_ids": [
+                benchmark_id_from_response_file(file)
+                for file in selected_files
+            ],
+            "registries": registries,
+            "examples": iter_training_examples(
+                response_files=selected_files,
+                repo_id=REPO_ID,
+                registries=registries,
+            ),
+        }
+
+    if selected_split is not None:
+        return build_split(selected_split)
+
+    return (
+        build_split("train"),
+        build_split("validation"),
+        build_split("test"),
+    )
+
+
+def evaluate(
+    predict_fn: Callable[[dict, list[dict] | None], float],
+    examples: Iterable[dict],
+) -> dict:
+    """Evaluate a predictor on one binary-labeled split.
+
+    Pass ``validation_data["examples"]`` or ``test_data["examples"]``. The
+    behavior is identical for either split; this function intentionally does
+    not know which split it received.
+    """
+    labels: list[int] = []
+    predictions: list[float] = []
+    skipped_non_binary = 0
+
+    for example in examples:
+        label = example.get("label")
+        if label not in (0, 1, 0.0, 1.0):
+            skipped_non_binary += 1
+            continue
+
+        input_row = {
+            "model_id": example.get("model_id"),
+            "benchmark": example.get("benchmark"),
+            "condition": example.get("condition"),
+            "subject_content": example.get("subject_content"),
+            "item_content": example.get("item_content"),
+        }
+        prediction = _assert_probability(predict_fn(input_row, labeled=[]))
+        labels.append(int(label))
+        predictions.append(prediction)
+
+    return {
+        "n": len(labels),
+        "skipped_non_binary": skipped_non_binary,
+        "negative_log_loss": _negative_log_loss(labels, predictions),
+        "auc_roc": _auc_roc(labels, predictions),
+    }
+
+
+def _assert_probability(value) -> float:
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        raise ValueError("predict_fn must return a finite numeric probability.")
+    probability = float(value)
+    if not math.isfinite(probability) or probability < 0.0 or probability > 1.0:
+        raise ValueError("predict_fn must return a finite probability in [0, 1].")
+    return probability
+
+
+def _negative_log_loss(labels: list[int], predictions: list[float]) -> float:
+    if not labels:
+        return float("nan")
+
+    eps = 1e-7
+    total = 0.0
+    for label, prediction in zip(labels, predictions):
+        p = min(max(prediction, eps), 1.0 - eps)
+        total += label * math.log(p) + (1 - label) * math.log(1.0 - p)
+    return total / len(labels)
+
+
+def _auc_roc(labels: list[int], predictions: list[float]) -> float:
+    positives = sum(labels)
+    negatives = len(labels) - positives
+    if positives == 0 or negatives == 0:
+        return float("nan")
+
+    rows = sorted(zip(predictions, labels), key=lambda row: row[0])
+    rank_sum_positive = 0.0
+    rank = 1
+    index = 0
+    while index < len(rows):
+        end = index + 1
+        while end < len(rows) and rows[end][0] == rows[index][0]:
+            end += 1
+
+        average_rank = (rank + rank + (end - index) - 1) / 2.0
+        positives_in_tie = sum(label for _, label in rows[index:end])
+        rank_sum_positive += positives_in_tie * average_rank
+
+        rank += end - index
+        index = end
+
+    return (rank_sum_positive - positives * (positives + 1) / 2.0) / (positives * negatives)
+
+
 if __name__ == "__main__":
-    data = get_training_data(limit=3)
-    print(f"Response parquet files: {data['num_response_files']}")
-    print(f"Benchmarks in registry: {len(data['benchmark_ids'])}")
-    print("\nExample rows:")
-    for example in data["examples"]:
+    train_data, validation_data, test_data = load_split_data()
+    print(f"Response parquet files: {train_data['num_response_files']}")
+    print(f"train benchmarks: {train_data['benchmark_ids']}")
+    if validation_data is not None:
+        print(f"validation benchmarks: {validation_data['benchmark_ids']}")
+    if test_data is not None:
+        print(f"test benchmarks: {test_data['benchmark_ids']}")
+    print("\nExample train rows:")
+    for index, example in enumerate(train_data["examples"]):
+        if index >= 3:
+            break
         print(example)

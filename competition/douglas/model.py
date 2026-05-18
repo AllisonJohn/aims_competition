@@ -1,44 +1,66 @@
-"""Sample code submission for the Predictive AI Evaluation Challenge.
+"""Douglas submission model.
 
-Your submission must define a single function:
-
-    predict(input: dict, labeled: list[dict] | None = None) -> float
-
-The ingestion program calls predict() once per hidden (model_id, item_id) pair. Module-level code
-runs once when the container starts. Load weights, tokenizers, prompt
-templates here. Heavy training must be done OFFLINE (e.g. publish a model
-to HuggingFace and load it at module init).
-
-`input` keys
-------------
-    benchmark        Benchmark identifier (e.g. "mmlupro", "ai2d_test").
-    condition        Test condition (e.g. "zero-shot"). Literal "none" when
-                     no condition applies.
-    subject_content  Text description of the AI subject being evaluated,
-                     beginning with a "Name:" line.
-    item_content     The question / prompt / task text the subject is asked.
-
-`labeled` (optional)
---------------------
-    A list of dicts shaped like `input` plus a `label` field (0 or 1).
-    These are revealed via adaptive labeling (see labeling.py). May be None
-    or empty.
-
-Return value
-------------
-    A single float in [0, 1], the predicted probability that the subject
-    answers the item correctly.
+Training happens offline in ``training.py``. This file only loads the saved
+checkpoint and serves ``predict()``.
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Module-level init: runs once when the container starts.
-# Replace this with model loading, tokenizer setup, prompt templates, etc.
-# ---------------------------------------------------------------------------
+
+LOCAL_SMOKE_TEST_ENV = "PREDICTIVE_EVAL_LOCAL_SMOKE_TEST"
+ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_model.pt"
+
+
+def _local_smoke_test_enabled() -> bool:
+    value = os.environ.get(LOCAL_SMOKE_TEST_ENV, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_cache_dir() -> str | None:
+    candidates = [
+        os.environ.get("HF_HOME", "").strip(),
+        "/app/hf_cache",
+        str(Path(__file__).with_name(".hf_cache")),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        if os.access(path, os.W_OK):
+            return str(path)
+    return None
+
+
+SCORER = None
+LOAD_ERROR = None
+
+try:
+    if not ARTIFACT_PATH.exists():
+        raise FileNotFoundError(f"Missing model artifact: {ARTIFACT_PATH}")
+    try:
+        from .modeling import load_checkpoint
+    except ImportError:
+        from modeling import load_checkpoint
+
+    SCORER = load_checkpoint(
+        ARTIFACT_PATH,
+        local_files_only=True,
+        cache_dir=_resolve_cache_dir(),
+    )
+except Exception as exc:
+    LOAD_ERROR = exc
+    if not _local_smoke_test_enabled():
+        print(f"[douglas/model.py] WARNING: using fallback predictor ({exc!r})", flush=True)
 
 
 def predict(input: dict, labeled: list[dict] | None = None) -> float:
-    """Return the predicted probability that the subject answers correctly."""
-    return 0.5
+    if SCORER is None:
+        return 0.5
+    return SCORER.predict_probability(input)
