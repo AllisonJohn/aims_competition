@@ -202,6 +202,32 @@ class ItemQuestionEncoder(nn.Module):
     def encode_sentence_representations(self, item_side_info: dict) -> torch.Tensor:
         text = item_side_info.get("item_content") or ""
         sentences = split_sentences(text)
+        return self.encode_sentences(sentences)
+
+    def encode_sentence_representations_batch(
+        self,
+        item_side_infos: list[dict],
+    ) -> list[torch.Tensor]:
+        sentence_groups = [
+            split_sentences(item_side_info.get("item_content") or "")
+            for item_side_info in item_side_infos
+        ]
+        flat_sentences = [
+            sentence
+            for sentences in sentence_groups
+            for sentence in sentences
+        ]
+        flat_representations = self.encode_sentences(flat_sentences)
+
+        grouped = []
+        offset = 0
+        for sentences in sentence_groups:
+            next_offset = offset + len(sentences)
+            grouped.append(flat_representations[offset:next_offset])
+            offset = next_offset
+        return grouped
+
+    def encode_sentences(self, sentences: list[str]) -> torch.Tensor:
         encoded = self.tokenizer(
             sentences,
             padding=True,

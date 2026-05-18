@@ -28,6 +28,7 @@ from competition.utils.load_train_data import evaluate, load_split_data  # noqa:
 
 
 ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_model.pt"
+ITEM_CACHE_PATH = Path(__file__).with_name("artifacts") / "item_representations.pt"
 LOG_EVERY_EXAMPLES = 100_000
 LOG_EVERY_UNIQUE_ITEMS = 1_000
 LOG_EVERY_BATCHES = 100
@@ -44,6 +45,7 @@ class DouglasModel:
         weight_decay: float = 1e-4,
         epochs: int = 1,
         batch_size: int = 64,
+        encode_batch_size: int = 128,
         temperature: float = 1.0,
         device: str | None = None,
     ) -> None:
@@ -53,6 +55,7 @@ class DouglasModel:
         self.weight_decay = weight_decay
         self.epochs = epochs
         self.batch_size = batch_size
+        self.encode_batch_size = encode_batch_size
         self.temperature = temperature
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.scorer: DouglasScorer | None = None
@@ -91,7 +94,7 @@ class DouglasModel:
                 labels = []
                 for index in batch_indexes.tolist():
                     example = examples[index]
-                    item_key = example.get("item_content") or ""
+                    item_key = self._item_cache_key(example)
                     logits.append(
                         self.scorer(
                             example,
@@ -147,31 +150,59 @@ class DouglasModel:
         if self.scorer is None:
             raise RuntimeError("DouglasModel must initialize scorer before caching items.")
 
-        item_cache = {}
-        self.scorer.item_encoder.eval()
-        for index, example in enumerate(examples, start=1):
-            item_key = example.get("item_content") or ""
-            if item_key in item_cache:
+        if ITEM_CACHE_PATH.exists():
+            print(f"Loading cached item representations from {ITEM_CACHE_PATH}", flush=True)
+            item_cache = torch.load(ITEM_CACHE_PATH, map_location=self.device, weights_only=False)
+            item_cache = {
+                key: value.to(self.device)
+                for key, value in item_cache.items()
+            }
+            print(f"Loaded {len(item_cache)} cached item representations.", flush=True)
+            return item_cache
+
+        item_infos = {}
+        for example in examples:
+            item_key = self._item_cache_key(example)
+            if item_key in item_infos:
                 continue
-            item_side_info = {
+            item_infos[item_key] = {
                 "benchmark": example.get("benchmark"),
                 "condition": example.get("condition"),
-                "item_content": item_key,
+                "item_content": example.get("item_content") or "",
             }
+
+        print(
+            f"Encoding {len(item_infos)} unique items in batches of {self.encode_batch_size}...",
+            flush=True,
+        )
+
+        item_cache = {}
+        item_keys = list(item_infos)
+        self.scorer.item_encoder.eval()
+        for start in range(0, len(item_keys), self.encode_batch_size):
+            batch_keys = item_keys[start:start + self.encode_batch_size]
+            batch_infos = [item_infos[key] for key in batch_keys]
             with torch.no_grad():
-                item_cache[item_key] = (
-                    self.scorer.item_encoder
-                    .encode_sentence_representations(item_side_info)
-                    .detach()
+                batch_representations = (
+                    self.scorer.item_encoder.encode_sentence_representations_batch(batch_infos)
                 )
-            if len(item_cache) % LOG_EVERY_UNIQUE_ITEMS == 0:
+            for key, representation in zip(batch_keys, batch_representations):
+                item_cache[key] = representation.detach()
+
+            if len(item_cache) % LOG_EVERY_UNIQUE_ITEMS < self.encode_batch_size:
                 print(
-                    f"cached item representations for {len(item_cache)} unique items "
-                    f"after scanning {index} examples",
+                    f"cached item representations for {len(item_cache)}/{len(item_infos)} unique items",
                     flush=True,
                 )
+
+        ITEM_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(item_cache, ITEM_CACHE_PATH)
+        print(f"Saved item representation cache to {ITEM_CACHE_PATH}", flush=True)
         print(f"Cached {len(item_cache)} unique item representations.", flush=True)
         return item_cache
+
+    def _item_cache_key(self, example: dict) -> str:
+        return str(example.get("item_id") or example.get("item_content") or "")
 
     def _trainable_parameters(self):
         if self.scorer is None:
@@ -220,6 +251,7 @@ def main() -> None:
         weight_decay=1e-4,
         epochs=1,
         batch_size=64,
+        encode_batch_size=128,
         temperature=1.0,
     )
 

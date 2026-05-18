@@ -198,6 +198,7 @@ def to_training_example(row, registries: dict):
 
     return {
         "model_id": row["subject_id"],
+        "item_id": row["item_id"],
         "benchmark": benchmark_id,
         "condition": row["test_condition"] or "none",
         "subject_content": render_subject_content(subject, row["subject_id"]),
@@ -382,6 +383,7 @@ def evaluate(
 
         input_row = {
             "model_id": example.get("model_id"),
+            "item_id": example.get("item_id"),
             "benchmark": example.get("benchmark"),
             "condition": example.get("condition"),
             "subject_content": example.get("subject_content"),
