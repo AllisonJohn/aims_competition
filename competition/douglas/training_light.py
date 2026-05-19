@@ -28,7 +28,7 @@ LIGHT_CONFIGS = {
     "minilm": {
         "encoder_name": "sentence-transformers/all-MiniLM-L6-v2",
         "artifact_path": Path(__file__).with_name("artifacts") / "douglas_model_light_minilm.pt",
-        "item_cache_path": Path(__file__).with_name("artifacts") / "item_representations_light_minilm.pt",
+        "item_cache_path": Path(__file__).with_name("artifacts") / "item_representations_light_minilm_context_v2.pt",
         "item_encoder_cls": None,
         "encode_batch_size": 256,
     },
@@ -53,11 +53,12 @@ def parse_args() -> argparse.Namespace:
         default="features",
         help="Item encoder variant to use.",
     )
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--irt-l2", type=float, default=1e-4)
     return parser.parse_args()
 
 
@@ -83,7 +84,7 @@ def main() -> None:
     print(f"Light artifact: {config['artifact_path']}", flush=True)
 
     model = LightDouglasModel(
-        k=5,
+        k=4,
         p=8,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
@@ -91,6 +92,7 @@ def main() -> None:
         batch_size=args.batch_size,
         encode_batch_size=config["encode_batch_size"],
         temperature=args.temperature,
+        irt_l2=args.irt_l2,
     )
 
     print("Training light DouglasModel...", flush=True)

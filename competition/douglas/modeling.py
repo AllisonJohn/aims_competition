@@ -14,11 +14,12 @@ MODEL_EMBED_DIM = 8
 METADATA_FIELDS = ("model_id", "name", "organization", "size_params", "release_date", "family")
 NUMERIC_MODEL_FEATURES = ("log_params", "release_date", "frontier_developer")
 MODEL_FEATURE_DIM = len(METADATA_FIELDS) + len(NUMERIC_MODEL_FEATURES)
-MODEL_VECTOR_DIM = 5
+MODEL_VECTOR_DIM = 4
 QUESTION_ENCODER_NAME = "sentence-transformers/all-mpnet-base-v2"
 MAX_QUESTION_TOKENS = 256
 SENTENCE_COMPLEXITY_FEATURE_DIM = 16
 ITEM_FEATURE_DIM = 73
+ITEM_HEAD_HIDDEN_DIM = 128
 CLIP_LO = 1e-7
 CLIP_HI = 1.0 - 1e-7
 
@@ -137,8 +138,8 @@ class ItemQuestionEncoder(nn.Module):
 
         backbone_dim = self.backbone.config.hidden_size
         self.representation_dim = backbone_dim + SENTENCE_COMPLEXITY_FEATURE_DIM
-        self.loading_head = nn.Linear(self.representation_dim, loading_dim)
-        self.bias_head = nn.Linear(self.representation_dim, 1)
+        self.loading_head = build_item_head(self.representation_dim, loading_dim)
+        self.bias_head = build_item_head(self.representation_dim, 1)
 
         if freeze_backbone:
             for parameter in self.backbone.parameters():
@@ -149,7 +150,7 @@ class ItemQuestionEncoder(nn.Module):
         return self.forward_from_representations(representations)
 
     def encode_sentence_representations(self, item_side_info: dict) -> torch.Tensor:
-        text = item_side_info.get("item_content") or ""
+        text = render_item_encoder_text(item_side_info)
         sentences = split_sentences(text)
         return self.encode_sentences(sentences)
 
@@ -158,7 +159,7 @@ class ItemQuestionEncoder(nn.Module):
         item_side_infos: list[dict],
     ) -> list[torch.Tensor]:
         sentence_groups = [
-            split_sentences(item_side_info.get("item_content") or "")
+            split_sentences(render_item_encoder_text(item_side_info))
             for item_side_info in item_side_infos
         ]
         flat_sentences = [
@@ -232,21 +233,21 @@ class HandcraftedItemQuestionEncoder(nn.Module):
         self.loading_dim = loading_dim
         self.max_length = max_length
         self.representation_dim = ITEM_FEATURE_DIM
-        self.loading_head = nn.Linear(self.representation_dim, loading_dim)
-        self.bias_head = nn.Linear(self.representation_dim, 1)
+        self.loading_head = build_item_head(self.representation_dim, loading_dim)
+        self.bias_head = build_item_head(self.representation_dim, 1)
 
     def forward(self, item_side_info: dict) -> tuple[torch.Tensor, torch.Tensor]:
         representations = self.encode_sentence_representations(item_side_info)
         return self.forward_from_representations(representations)
 
     def encode_sentence_representations(self, item_side_info: dict) -> torch.Tensor:
-        return item_hardness_features(item_side_info).to(self.loading_head.weight.device).unsqueeze(0)
+        return item_hardness_features(item_side_info).to(self.head_device()).unsqueeze(0)
 
     def encode_sentence_representations_batch(
         self,
         item_side_infos: list[dict],
     ) -> list[torch.Tensor]:
-        device = self.loading_head.weight.device
+        device = self.head_device()
         return [
             item_hardness_features(item_side_info).to(device).unsqueeze(0)
             for item_side_info in item_side_infos
@@ -259,6 +260,9 @@ class HandcraftedItemQuestionEncoder(nn.Module):
         loading = torch.softmax(self.loading_head(sentence_representations), dim=-1)
         bias = self.bias_head(sentence_representations).squeeze(-1)
         return loading.mean(dim=0), bias.mean()
+
+    def head_device(self) -> torch.device:
+        return next(self.loading_head.parameters()).device
 
 
 class DouglasScorer(nn.Module):
@@ -315,7 +319,10 @@ class DouglasScorer(nn.Module):
         return clip_probability(float(probability.detach().cpu()))
 
     def cached_item_representations(self, input: dict) -> torch.Tensor:
-        key = input.get("item_content") or ""
+        key = "::".join(
+            str(input.get(field) or "")
+            for field in ("benchmark", "condition", "item_content")
+        )
         if key not in self.item_representation_cache:
             with torch.no_grad():
                 self.item_representation_cache[key] = (
@@ -473,6 +480,22 @@ def split_sentences(text: str) -> list[str]:
         if sentence.strip()
     ]
     return sentences or [""]
+
+
+def render_item_encoder_text(item_side_info: dict) -> str:
+    """Include task context in the text encoder input."""
+    benchmark = item_side_info.get("benchmark") or "unknown"
+    condition = item_side_info.get("condition") or "none"
+    item_content = item_side_info.get("item_content") or ""
+    return f"benchmark: {benchmark}\ncondition: {condition}\nitem: {item_content}"
+
+
+def build_item_head(input_dim: int, output_dim: int) -> nn.Sequential:
+    return nn.Sequential(
+        nn.Linear(input_dim, ITEM_HEAD_HIDDEN_DIM),
+        nn.LeakyReLU(negative_slope=0.01),
+        nn.Linear(ITEM_HEAD_HIDDEN_DIM, output_dim),
+    )
 
 
 def sentence_complexity_features(sentences: list[str]) -> torch.Tensor:

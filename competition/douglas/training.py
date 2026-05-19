@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 from torch import nn
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,16 +22,36 @@ from competition.douglas.modeling import (  # noqa: E402
     DouglasScorer,
     ItemQuestionEncoder,
     build_model_side_encoder,
+    extract_model_metadata,
     save_checkpoint,
 )
 from competition.utils.load_train_data import evaluate, load_split_data  # noqa: E402
 
 
 ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_model.pt"
-ITEM_CACHE_PATH = Path(__file__).with_name("artifacts") / "item_representations.pt"
+ITEM_CACHE_PATH = Path(__file__).with_name("artifacts") / "item_representations_context_v2.pt"
 LOG_EVERY_EXAMPLES = 100_000
 LOG_EVERY_UNIQUE_ITEMS = 1_000
 LOG_EVERY_BATCHES = 100
+
+
+class IRTFactorModel(nn.Module):
+    """Direct k-factor IRT lookup model used to create training targets."""
+
+    def __init__(self, num_models: int, num_items: int, k: int) -> None:
+        super().__init__()
+        self.model_factors = nn.Embedding(num_models, k)
+        self.item_loading_logits = nn.Embedding(num_items, k)
+        self.item_bias = nn.Embedding(num_items, 1)
+        nn.init.normal_(self.model_factors.weight, mean=0.0, std=0.1)
+        nn.init.zeros_(self.item_loading_logits.weight)
+        nn.init.zeros_(self.item_bias.weight)
+
+    def forward(self, model_indexes: torch.Tensor, item_indexes: torch.Tensor) -> torch.Tensor:
+        U_i = self.model_factors(model_indexes)
+        V_j = torch.softmax(self.item_loading_logits(item_indexes), dim=-1)
+        z_j = self.item_bias(item_indexes).squeeze(-1)
+        return (U_i * V_j).sum(dim=-1) + z_j
 
 
 class DouglasModel:
@@ -47,6 +67,7 @@ class DouglasModel:
         batch_size: int = 64,
         encode_batch_size: int = 128,
         temperature: float = 1.0,
+        irt_l2: float = 1e-4,
         device: str | None = None,
     ) -> None:
         self.k = k
@@ -57,12 +78,22 @@ class DouglasModel:
         self.batch_size = batch_size
         self.encode_batch_size = encode_batch_size
         self.temperature = temperature
+        self.irt_l2 = irt_l2
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.scorer: DouglasScorer | None = None
 
     def train(self, examples) -> None:
         examples = self._materialize_binary_examples(examples)
+        indexed = self._build_indexed_training_data(examples)
+        irt_model = self._fit_irt_factors(indexed)
+
         model_encoder = build_model_side_encoder(examples, p=self.p, output_dim=self.k).to(self.device)
+        self._fit_model_side_encoder(
+            model_encoder=model_encoder,
+            indexed=indexed,
+            irt_model=irt_model,
+        )
+
         item_encoder = ItemQuestionEncoder(
             encoder_name=QUESTION_ENCODER_NAME,
             loading_dim=self.k,
@@ -74,37 +105,163 @@ class DouglasModel:
             temperature=self.temperature,
         ).to(self.device)
 
-        item_cache = self._precompute_item_representations(examples)
+        item_cache = self._precompute_item_representations_from_infos(indexed["item_infos"])
+        self._fit_item_side_encoder(
+            item_encoder=item_encoder,
+            indexed=indexed,
+            irt_model=irt_model,
+            item_cache=item_cache,
+        )
+
+    def _fit_irt_factors(self, indexed: dict) -> IRTFactorModel:
+        print(
+            f"Fitting {self.k}-factor IRT model by joint maximum likelihood "
+            f"on {len(indexed['labels'])} observed entries...",
+            flush=True,
+        )
+        irt_model = IRTFactorModel(
+            num_models=len(indexed["model_to_index"]),
+            num_items=len(indexed["item_to_index"]),
+            k=self.k,
+        ).to(self.device)
+        dataset = TensorDataset(
+            indexed["model_indexes"],
+            indexed["item_indexes"],
+            indexed["labels"],
+        )
         loader = DataLoader(
-            list(range(len(examples))),
+            dataset,
             batch_size=self.batch_size,
             shuffle=True,
         )
-        optimizer = AdamW(self._trainable_parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        optimizer = AdamW(irt_model.parameters(), lr=self.learning_rate, weight_decay=0.0)
         criterion = nn.BCEWithLogitsLoss()
 
         for epoch in range(self.epochs):
-            self.scorer.train()
+            irt_model.train()
             total_loss = 0.0
             total_count = 0
 
+            for batch_number, (model_indexes, item_indexes, labels) in enumerate(loader, start=1):
+                model_indexes = model_indexes.to(self.device)
+                item_indexes = item_indexes.to(self.device)
+                labels = labels.to(self.device)
+
+                optimizer.zero_grad()
+                logits = irt_model(model_indexes, item_indexes)
+                bce_loss = criterion(logits, labels)
+                U_i = irt_model.model_factors(model_indexes)
+                V_j = torch.softmax(irt_model.item_loading_logits(item_indexes), dim=-1)
+                l2_penalty = U_i.pow(2).mean() + V_j.pow(2).mean()
+                loss = bce_loss + self.irt_l2 * l2_penalty
+                loss.backward()
+                optimizer.step()
+
+                total_loss += float(bce_loss.detach().cpu()) * len(labels)
+                total_count += len(labels)
+
+                if batch_number % LOG_EVERY_BATCHES == 0:
+                    running_loss = total_loss / max(total_count, 1)
+                    print(
+                        f"irt_epoch={epoch + 1} batch={batch_number}/{len(loader)} "
+                        f"batch_bce={float(bce_loss.detach().cpu()):.6f} "
+                        f"running_bce={running_loss:.6f}",
+                        flush=True,
+                    )
+
+            mean_loss = total_loss / max(total_count, 1)
+            print(
+                f"irt_epoch={epoch + 1} train_bce={mean_loss:.6f} examples={total_count}",
+                flush=True,
+            )
+        return irt_model
+
+    def _fit_model_side_encoder(
+        self,
+        model_encoder,
+        indexed: dict,
+        irt_model: IRTFactorModel,
+    ) -> None:
+        print("Training metadata -> U_i predictor with L1 loss...", flush=True)
+        targets = irt_model.model_factors.weight.detach()
+        model_examples = indexed["model_examples"]
+        loader = DataLoader(
+            list(range(len(model_examples))),
+            batch_size=min(self.batch_size, len(model_examples)),
+            shuffle=True,
+        )
+        optimizer = AdamW(model_encoder.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        criterion = nn.L1Loss()
+
+        for epoch in range(self.epochs):
+            model_encoder.train()
+            total_loss = 0.0
+            total_count = 0
             for batch_number, batch_indexes in enumerate(loader, start=1):
                 optimizer.zero_grad()
+                predictions = []
+                batch_targets = []
+                for model_index in batch_indexes.tolist():
+                    metadata = model_examples[model_index]
+                    predictions.append(model_encoder(metadata))
+                    batch_targets.append(targets[model_index].to(self.device))
+
+                prediction_tensor = torch.stack(predictions)
+                target_tensor = torch.stack(batch_targets)
+                loss = criterion(prediction_tensor, target_tensor)
+                loss.backward()
+                optimizer.step()
+
+                total_loss += float(loss.detach().cpu()) * len(batch_indexes)
+                total_count += len(batch_indexes)
+
+            print(
+                f"model_side_epoch={epoch + 1} l1={total_loss / max(total_count, 1):.6f} "
+                f"models={total_count}",
+                flush=True,
+            )
+
+    def _fit_item_side_encoder(
+        self,
+        item_encoder,
+        indexed: dict,
+        irt_model: IRTFactorModel,
+        item_cache: dict[str, torch.Tensor],
+    ) -> None:
+        print("Training item content -> V_j,z_j with frozen IRT U_i targets...", flush=True)
+        U_targets = irt_model.model_factors.weight.detach()
+        dataset = TensorDataset(
+            indexed["model_indexes"],
+            indexed["item_indexes"],
+            indexed["labels"],
+        )
+        loader = DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+        )
+        optimizer = AdamW(
+            list(item_encoder.loading_head.parameters()) + list(item_encoder.bias_head.parameters()),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+        )
+        criterion = nn.BCEWithLogitsLoss()
+
+        for epoch in range(self.epochs):
+            item_encoder.train()
+            total_loss = 0.0
+            total_count = 0
+            for batch_number, (model_indexes, item_indexes, labels) in enumerate(loader, start=1):
+                optimizer.zero_grad()
                 logits = []
-                labels = []
-                for index in batch_indexes.tolist():
-                    example = examples[index]
-                    item_key = self._item_cache_key(example)
-                    logits.append(
-                        self.scorer(
-                            example,
-                            item_representations=item_cache[item_key],
-                        )
-                    )
-                    labels.append(float(example["label"]))
+                for model_index, item_index in zip(model_indexes.tolist(), item_indexes.tolist()):
+                    item_key = indexed["item_keys"][item_index]
+                    U_i = U_targets[model_index].to(self.device)
+                    V_j, z_j = item_encoder.forward_from_representations(item_cache[item_key])
+                    logits.append(torch.dot(U_i, V_j) + z_j)
 
                 logits_tensor = torch.stack(logits)
-                labels_tensor = torch.tensor(labels, dtype=logits_tensor.dtype, device=logits_tensor.device)
+                labels_tensor = labels.to(logits_tensor.device)
                 loss = criterion(logits_tensor, labels_tensor)
                 loss.backward()
                 optimizer.step()
@@ -115,16 +272,70 @@ class DouglasModel:
                 if batch_number % LOG_EVERY_BATCHES == 0:
                     running_loss = total_loss / max(total_count, 1)
                     print(
-                        f"epoch={epoch + 1} batch={batch_number}/{len(loader)} "
+                        f"item_epoch={epoch + 1} batch={batch_number}/{len(loader)} "
+                        f"batch_bce={float(loss.detach().cpu()):.6f} "
                         f"running_bce={running_loss:.6f}",
                         flush=True,
                     )
 
-            mean_loss = total_loss / max(total_count, 1)
             print(
-                f"epoch={epoch + 1} train_bce={mean_loss:.6f} examples={total_count}",
+                f"item_epoch={epoch + 1} train_bce={total_loss / max(total_count, 1):.6f} "
+                f"examples={total_count}",
                 flush=True,
             )
+
+    def _build_indexed_training_data(self, examples: list[dict]) -> dict:
+        model_to_index = {}
+        item_to_index = {}
+        model_examples = []
+        item_infos = {}
+        model_indexes = []
+        item_indexes = []
+        labels = []
+
+        for example in examples:
+            model_key = self._model_cache_key(example)
+            if model_key not in model_to_index:
+                model_to_index[model_key] = len(model_examples)
+                model_examples.append(
+                    extract_model_metadata(
+                        example.get("subject_content"),
+                        model_id=example.get("model_id"),
+                    )
+                )
+
+            item_key = self._item_cache_key(example)
+            if item_key not in item_to_index:
+                item_to_index[item_key] = len(item_infos)
+                item_infos[item_key] = {
+                    "benchmark": example.get("benchmark"),
+                    "condition": example.get("condition"),
+                    "item_content": example.get("item_content") or "",
+                }
+
+            model_indexes.append(model_to_index[model_key])
+            item_indexes.append(item_to_index[item_key])
+            labels.append(float(example["label"]))
+
+        item_keys = [None] * len(item_infos)
+        for key, index in item_to_index.items():
+            item_keys[index] = key
+
+        print(
+            f"Indexed training data: models={len(model_to_index)} "
+            f"items={len(item_to_index)} examples={len(labels)}",
+            flush=True,
+        )
+        return {
+            "model_to_index": model_to_index,
+            "item_to_index": item_to_index,
+            "model_examples": model_examples,
+            "item_infos": item_infos,
+            "item_keys": item_keys,
+            "model_indexes": torch.tensor(model_indexes, dtype=torch.long),
+            "item_indexes": torch.tensor(item_indexes, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.float32),
+        }
 
     def predict(self, input: dict, labeled: list[dict] | None = None) -> float:
         if self.scorer is None:
@@ -146,7 +357,10 @@ class DouglasModel:
         )
         print(f"Saved checkpoint to {path}")
 
-    def _precompute_item_representations(self, examples: list[dict]) -> dict[str, torch.Tensor]:
+    def _precompute_item_representations_from_infos(
+        self,
+        item_infos: dict[str, dict],
+    ) -> dict[str, torch.Tensor]:
         if self.scorer is None:
             raise RuntimeError("DouglasModel must initialize scorer before caching items.")
 
@@ -159,17 +373,6 @@ class DouglasModel:
             }
             print(f"Loaded {len(item_cache)} cached item representations.", flush=True)
             return item_cache
-
-        item_infos = {}
-        for example in examples:
-            item_key = self._item_cache_key(example)
-            if item_key in item_infos:
-                continue
-            item_infos[item_key] = {
-                "benchmark": example.get("benchmark"),
-                "condition": example.get("condition"),
-                "item_content": example.get("item_content") or "",
-            }
 
         print(
             f"Encoding {len(item_infos)} unique items in batches of {self.encode_batch_size}...",
@@ -202,7 +405,13 @@ class DouglasModel:
         return item_cache
 
     def _item_cache_key(self, example: dict) -> str:
-        return str(example.get("item_id") or example.get("item_content") or "")
+        item_key = example.get("item_id") or example.get("item_content") or ""
+        benchmark = example.get("benchmark") or ""
+        condition = example.get("condition") or ""
+        return f"{benchmark}::{condition}::{item_key}"
+
+    def _model_cache_key(self, example: dict) -> str:
+        return str(example.get("model_id") or example.get("subject_content") or "")
 
     def _trainable_parameters(self):
         if self.scorer is None:
@@ -245,7 +454,7 @@ def main() -> None:
     print(f"Test benchmarks: {test_data['benchmark_ids']}")
 
     model = DouglasModel(
-        k=5,
+        k=4,
         p=8,
         learning_rate=1e-4,
         weight_decay=1e-4,

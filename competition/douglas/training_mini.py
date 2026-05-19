@@ -18,7 +18,7 @@ from competition.utils.load_train_data import evaluate, load_split_data  # noqa:
 
 
 MINI_ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_model_mini.pt"
-MINI_ITEM_CACHE_PATH = Path(__file__).with_name("artifacts") / "item_representations_mini.pt"
+MINI_ITEM_CACHE_PATH = Path(__file__).with_name("artifacts") / "item_representations_mini_context_v2.pt"
 
 
 def env_int(name: str, default: int) -> int:
@@ -63,7 +63,7 @@ def main() -> None:
     print(f"Mini artifact: {MINI_ARTIFACT_PATH}", flush=True)
 
     model = DouglasModel(
-        k=5,
+        k=4,
         p=8,
         learning_rate=1e-4,
         weight_decay=1e-4,

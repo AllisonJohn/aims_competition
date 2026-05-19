@@ -79,7 +79,7 @@ def train_remote(
     print(f"Test benchmarks: {test_data['benchmark_ids']}", flush=True)
 
     model = DouglasModel(
-        k=5,
+        k=4,
         p=8,
         learning_rate=learning_rate,
         weight_decay=weight_decay,
