@@ -20,6 +20,7 @@ from competition.douglas.modeling import (  # noqa: E402
     MODEL_VECTOR_DIM,
     QUESTION_ENCODER_NAME,
     ITEM_HEAD_HIDDEN_DIM,
+    ITEM_HEAD_RESIDUAL,
     DouglasScorer,
     ItemQuestionEncoder,
     build_model_side_encoder,
@@ -41,14 +42,23 @@ LOG_EVERY_BATCHES = 100
 class IRTFactorModel(nn.Module):
     """Direct k-factor IRT lookup model used to create training targets."""
 
-    def __init__(self, num_models: int, num_items: int, k: int) -> None:
+    def __init__(
+        self,
+        num_models: int,
+        num_items: int,
+        k: int,
+        item_bias_init: torch.Tensor | None = None,
+    ) -> None:
         super().__init__()
         self.model_factors = nn.Embedding(num_models, k)
         self.item_loading_logits = nn.Embedding(num_items, k)
         self.item_bias = nn.Embedding(num_items, 1)
         nn.init.normal_(self.model_factors.weight, mean=0.0, std=0.1)
         nn.init.zeros_(self.item_loading_logits.weight)
-        nn.init.zeros_(self.item_bias.weight)
+        if item_bias_init is None:
+            nn.init.zeros_(self.item_bias.weight)
+        else:
+            self.item_bias.weight.data.copy_(item_bias_init.reshape(num_items, 1))
 
     def forward(
         self,
@@ -79,6 +89,7 @@ class DouglasModel:
         batch_size: int = 64,
         encode_batch_size: int = 128,
         item_head_hidden_dim: int = ITEM_HEAD_HIDDEN_DIM,
+        item_head_residual: bool = ITEM_HEAD_RESIDUAL,
         temperature: float = 1.0,
         irt_l2: float = 1e-4,
         device: str | None = None,
@@ -91,6 +102,7 @@ class DouglasModel:
         self.batch_size = batch_size
         self.encode_batch_size = encode_batch_size
         self.item_head_hidden_dim = item_head_hidden_dim
+        self.item_head_residual = item_head_residual
         self.temperature = temperature
         self.irt_l2 = irt_l2
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -101,6 +113,7 @@ class DouglasModel:
             "DouglasModel config: "
             f"k={self.k} p={self.p} epochs={self.epochs} batch_size={self.batch_size} "
             f"encode_batch_size={self.encode_batch_size} item_head_hidden_dim={self.item_head_hidden_dim} "
+            f"item_head_residual={self.item_head_residual} "
             f"lr={self.learning_rate} "
             f"weight_decay={self.weight_decay} irt_l2={self.irt_l2} "
             f"temperature={self.temperature} device={self.device}",
@@ -131,6 +144,7 @@ class DouglasModel:
             encoder_name=QUESTION_ENCODER_NAME,
             loading_dim=self.k,
             hidden_dim=self.item_head_hidden_dim,
+            item_head_residual=self.item_head_residual,
             freeze_backbone=True,
         ).to(self.device)
         self.scorer = DouglasScorer(
@@ -153,10 +167,12 @@ class DouglasModel:
             f"on {len(indexed['labels'])} observed entries...",
             flush=True,
         )
+        item_bias_init = self._empirical_item_bias_init(indexed)
         irt_model = IRTFactorModel(
             num_models=len(indexed["model_to_index"]),
             num_items=len(indexed["item_to_index"]),
             k=self.k,
+            item_bias_init=item_bias_init,
         ).to(self.device)
         dataset = TensorDataset(
             indexed["model_indexes"],
@@ -225,6 +241,45 @@ class DouglasModel:
                 flush=True,
             )
         return irt_model
+
+    def _empirical_item_bias_init(self, indexed: dict, eps: float = 1e-3) -> torch.Tensor:
+        """Initialize z_j from per-item empirical easiness for absolute rows."""
+        num_items = len(indexed["item_to_index"])
+        item_indexes = indexed["item_indexes"]
+        labels = indexed["labels"]
+        absolute_mask = indexed["right_model_indexes"] < 0
+
+        sums = torch.zeros(num_items, dtype=torch.float32)
+        counts = torch.zeros(num_items, dtype=torch.float32)
+        if absolute_mask.any():
+            absolute_items = item_indexes[absolute_mask]
+            absolute_labels = labels[absolute_mask]
+            sums.scatter_add_(0, absolute_items, absolute_labels)
+            counts.scatter_add_(0, absolute_items, torch.ones_like(absolute_labels))
+
+        means = torch.full((num_items,), 0.5, dtype=torch.float32)
+        observed = counts > 0
+        means[observed] = sums[observed] / counts[observed]
+        clipped = means.clamp(eps, 1.0 - eps)
+        bias = torch.logit(clipped)
+
+        observed_count = int(observed.sum().item())
+        if observed_count:
+            observed_means = means[observed]
+            print(
+                f"Initialized item bias z_j from empirical easiness for "
+                f"{observed_count}/{num_items} items "
+                f"(mean={observed_means.mean().item():.4f}, "
+                f"min={observed_means.min().item():.4f}, "
+                f"max={observed_means.max().item():.4f}).",
+                flush=True,
+            )
+        else:
+            print(
+                "No absolute model-item rows found; initialized all item biases z_j to 0.",
+                flush=True,
+            )
+        return bias
 
     def _fit_model_side_encoder(
         self,
@@ -435,6 +490,7 @@ class DouglasModel:
                 "p": self.p,
                 "encoder_name": QUESTION_ENCODER_NAME,
                 "item_head_hidden_dim": self.item_head_hidden_dim,
+                "item_head_residual": self.item_head_residual,
                 "temperature": self.temperature,
             },
         )

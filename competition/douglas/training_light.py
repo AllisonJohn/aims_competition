@@ -32,6 +32,13 @@ LIGHT_CONFIGS = {
         "item_encoder_cls": None,
         "encode_batch_size": 256,
     },
+    "bge-large": {
+        "encoder_name": "BAAI/bge-large-en-v1.5",
+        "artifact_path": Path(__file__).with_name("artifacts") / "douglas_model_light_bge_large.pt",
+        "item_cache_path": Path(__file__).with_name("artifacts") / "item_representations_light_bge_large_context_v1.pt",
+        "item_encoder_cls": None,
+        "encode_batch_size": 96,
+    },
 }
 
 
@@ -66,6 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--irt-l2", type=float, default=1e-4)
     parser.add_argument("--item-head-hidden-dim", type=int, default=ITEM_HEAD_HIDDEN_DIM)
+    parser.add_argument("--item-head-residual", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--latent-dim", type=int, default=4)
     return parser.parse_args()
 
@@ -93,6 +101,7 @@ def main() -> None:
         f"irt_l2={args.irt_l2} temperature={args.temperature} "
         f"latent_dim={args.latent_dim} "
         f"item_head_hidden_dim={args.item_head_hidden_dim} "
+        f"item_head_residual={args.item_head_residual} "
         f"encode_batch_size={config['encode_batch_size']}",
         flush=True,
     )
@@ -110,6 +119,7 @@ def main() -> None:
         batch_size=args.batch_size,
         encode_batch_size=config["encode_batch_size"],
         item_head_hidden_dim=args.item_head_hidden_dim,
+        item_head_residual=args.item_head_residual,
         temperature=args.temperature,
         irt_l2=args.irt_l2,
     )

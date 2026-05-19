@@ -25,10 +25,12 @@ from competition.utils.load_train_data import evaluate, load_split_data  # noqa:
 MINI_ARTIFACT_PATHS = {
     "features": Path(__file__).with_name("artifacts") / "douglas_model_light_mini_features.pt",
     "minilm": Path(__file__).with_name("artifacts") / "douglas_model_light_mini_minilm.pt",
+    "bge-large": Path(__file__).with_name("artifacts") / "douglas_model_light_mini_bge_large.pt",
 }
 MINI_ITEM_CACHE_PATHS = {
     "features": Path(__file__).with_name("artifacts") / "item_feature_representations_light_mini_v1.pt",
     "minilm": Path(__file__).with_name("artifacts") / "item_representations_light_mini_minilm_v1.pt",
+    "bge-large": Path(__file__).with_name("artifacts") / "item_representations_light_mini_bge_large_v1.pt",
 }
 
 
@@ -120,6 +122,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=env_int("DOUGLAS_ITEM_HEAD_HIDDEN_DIM", ITEM_HEAD_HIDDEN_DIM),
     )
+    parser.add_argument("--item-head-residual", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--latent-dim", type=int, default=env_int("DOUGLAS_LATENT_DIM", 4))
     return parser.parse_args()
 
@@ -162,7 +165,8 @@ def main() -> None:
         f"weight_decay={args.weight_decay} irt_l2={args.irt_l2} "
         f"temperature={args.temperature} "
         f"latent_dim={args.latent_dim} "
-        f"item_head_hidden_dim={args.item_head_hidden_dim}",
+        f"item_head_hidden_dim={args.item_head_hidden_dim} "
+        f"item_head_residual={args.item_head_residual}",
         flush=True,
     )
     print(f"Train benchmarks: {train_data['benchmark_ids']}", flush=True)
@@ -185,6 +189,7 @@ def main() -> None:
         batch_size=args.batch_size,
         encode_batch_size=encode_batch_size,
         item_head_hidden_dim=args.item_head_hidden_dim,
+        item_head_residual=args.item_head_residual,
         temperature=args.temperature,
         irt_l2=args.irt_l2,
     )

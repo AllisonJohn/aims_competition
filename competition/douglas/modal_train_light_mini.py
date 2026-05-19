@@ -10,6 +10,9 @@ Default cheap smoke test:
 MiniLM smoke test:
     modal run competition/douglas/modal_train_light_mini.py --item-encoder minilm
 
+BGE-large smoke test:
+    modal run competition/douglas/modal_train_light_mini.py --item-encoder bge-large --use-gpu
+
 K=8 smoke test:
     modal run competition/douglas/modal_train_light_mini.py --latent-dim 8
 """
@@ -63,6 +66,7 @@ def _remote_train_light_mini(
     temperature: float,
     irt_l2: float,
     item_head_hidden_dim: int,
+    item_head_residual: bool,
     latent_dim: int,
 ) -> dict:
     import os
@@ -122,7 +126,8 @@ def _remote_train_light_mini(
         f"Mini limits: train_items={train_items} train_rows={len(train_examples)} "
         f"test_items={test_items} test_rows={len(test_examples)} epochs={epochs} "
         f"batch_size={batch_size} encode_batch_size={encode_batch_size} "
-        f"latent_dim={latent_dim} item_head_hidden_dim={item_head_hidden_dim}",
+        f"latent_dim={latent_dim} item_head_hidden_dim={item_head_hidden_dim} "
+        f"item_head_residual={item_head_residual}",
         flush=True,
     )
     print(f"Modal item cache: {item_cache_path}", flush=True)
@@ -137,6 +142,7 @@ def _remote_train_light_mini(
         batch_size=batch_size,
         encode_batch_size=encode_batch_size,
         item_head_hidden_dim=item_head_hidden_dim,
+        item_head_residual=item_head_residual,
         temperature=temperature,
         irt_l2=irt_l2,
         device="cuda" if torch.cuda.is_available() else "cpu",
@@ -198,14 +204,20 @@ def main(
     temperature: float = 1.0,
     irt_l2: float = 1e-4,
     item_head_hidden_dim: int = 128,
+    item_head_residual: bool = True,
     latent_dim: int = 4,
     use_gpu: bool = False,
 ) -> None:
-    if item_encoder not in {"features", "minilm"}:
-        raise ValueError("item_encoder must be one of: features, minilm")
+    if item_encoder not in {"features", "minilm", "bge-large"}:
+        raise ValueError("item_encoder must be one of: features, minilm, bge-large")
 
     if encode_batch_size <= 0:
-        encode_batch_size = 4096 if item_encoder == "features" else 256
+        if item_encoder == "features":
+            encode_batch_size = 4096
+        elif item_encoder == "bge-large":
+            encode_batch_size = 96
+        else:
+            encode_batch_size = 256
 
     kwargs = {
         "item_encoder": item_encoder,
@@ -221,10 +233,11 @@ def main(
         "temperature": temperature,
         "irt_l2": irt_l2,
         "item_head_hidden_dim": item_head_hidden_dim,
+        "item_head_residual": item_head_residual,
         "latent_dim": latent_dim,
     }
 
-    remote_fn = train_light_mini_gpu_remote if use_gpu or item_encoder == "minilm" else train_light_mini_cpu_remote
+    remote_fn = train_light_mini_gpu_remote if use_gpu or item_encoder != "features" else train_light_mini_cpu_remote
     out = remote_fn.remote(**kwargs)
 
     local_artifact_path = LOCAL_ARTIFACT_DIR / out["artifact_name"]

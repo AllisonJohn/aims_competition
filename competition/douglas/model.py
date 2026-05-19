@@ -30,6 +30,7 @@ MODEL_FEATURE_DIM = len(METADATA_FIELDS) + len(NUMERIC_MODEL_FEATURES)
 MODEL_VECTOR_DIM = 4
 ITEM_FEATURE_DIM = 73
 ITEM_HEAD_HIDDEN_DIM = 128
+ITEM_HEAD_RESIDUAL = True
 CLIP_LO = 1e-7
 CLIP_HI = 1.0 - 1e-7
 
@@ -170,6 +171,7 @@ class HandcraftedItemQuestionEncoder(nn.Module):
         loading_dim: int = MODEL_VECTOR_DIM,
         max_length: int = 256,
         hidden_dim: int = ITEM_HEAD_HIDDEN_DIM,
+        item_head_residual: bool = ITEM_HEAD_RESIDUAL,
         freeze_backbone: bool = True,
         local_files_only: bool = False,
         cache_dir: str | None = None,
@@ -179,9 +181,20 @@ class HandcraftedItemQuestionEncoder(nn.Module):
         self.loading_dim = loading_dim
         self.max_length = max_length
         self.hidden_dim = hidden_dim
+        self.item_head_residual = item_head_residual
         self.representation_dim = ITEM_FEATURE_DIM
-        self.loading_head = build_item_head(self.representation_dim, loading_dim, hidden_dim=hidden_dim)
-        self.bias_head = build_item_head(self.representation_dim, 1, hidden_dim=hidden_dim)
+        self.loading_head = build_item_head(
+            self.representation_dim,
+            loading_dim,
+            hidden_dim=hidden_dim,
+            residual=item_head_residual,
+        )
+        self.bias_head = build_item_head(
+            self.representation_dim,
+            1,
+            hidden_dim=hidden_dim,
+            residual=item_head_residual,
+        )
 
     def encode_sentence_representations(self, item_side_info: dict) -> torch.Tensor:
         return item_hardness_features(item_side_info).to(self.head_device()).unsqueeze(0)
@@ -254,6 +267,7 @@ def load_checkpoint(path: Path, map_location: str = "cpu") -> DouglasScorer:
     k = int(config.get("k", MODEL_VECTOR_DIM))
     p = int(config.get("p", MODEL_EMBED_DIM))
     item_head_hidden_dim = int(config.get("item_head_hidden_dim", ITEM_HEAD_HIDDEN_DIM))
+    item_head_residual = bool(config.get("item_head_residual", False))
 
     model_encoder = ModelSideEncoder(
         field_value_means=data.get("field_value_means"),
@@ -267,6 +281,7 @@ def load_checkpoint(path: Path, map_location: str = "cpu") -> DouglasScorer:
     item_encoder = HandcraftedItemQuestionEncoder(
         loading_dim=k,
         hidden_dim=item_head_hidden_dim,
+        item_head_residual=item_head_residual,
     )
     item_encoder.loading_head.load_state_dict(data["item_heads_state_dict"]["loading_head"])
     item_encoder.bias_head.load_state_dict(data["item_heads_state_dict"]["bias_head"])
@@ -280,7 +295,35 @@ def load_checkpoint(path: Path, map_location: str = "cpu") -> DouglasScorer:
     return scorer
 
 
-def build_item_head(input_dim: int, output_dim: int, hidden_dim: int = ITEM_HEAD_HIDDEN_DIM) -> nn.Sequential:
+class ResidualItemHead(nn.Module):
+    def __init__(self, input_dim: int, output_dim: int, hidden_dim: int) -> None:
+        super().__init__()
+        self.input_projection = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LeakyReLU(negative_slope=0.01),
+        )
+        self.residual_block = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(negative_slope=0.01),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+        self.activation = nn.LeakyReLU(negative_slope=0.01)
+        self.output_projection = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        hidden = self.input_projection(inputs)
+        hidden = self.activation(hidden + self.residual_block(hidden))
+        return self.output_projection(hidden)
+
+
+def build_item_head(
+    input_dim: int,
+    output_dim: int,
+    hidden_dim: int = ITEM_HEAD_HIDDEN_DIM,
+    residual: bool = ITEM_HEAD_RESIDUAL,
+) -> nn.Module:
+    if residual:
+        return ResidualItemHead(input_dim, output_dim, hidden_dim)
     return nn.Sequential(
         nn.Linear(input_dim, hidden_dim),
         nn.LeakyReLU(negative_slope=0.01),
