@@ -11,6 +11,9 @@ from torch import nn
 MISSING_TOKEN = "__missing__"
 UNKNOWN_MODEL_TOKEN = "__unknown_model__"
 MODEL_EMBED_DIM = 8
+METADATA_FIELDS = ("model_id", "name", "organization", "size_params", "release_date", "family")
+NUMERIC_MODEL_FEATURES = ("log_params", "release_date", "frontier_developer")
+MODEL_FEATURE_DIM = len(METADATA_FIELDS) + len(NUMERIC_MODEL_FEATURES)
 MODEL_VECTOR_DIM = 5
 QUESTION_ENCODER_NAME = "sentence-transformers/all-mpnet-base-v2"
 MAX_QUESTION_TOKENS = 256
@@ -51,107 +54,50 @@ def extract_model_metadata(subject_content: str | None, model_id: str | None = N
 
 
 class ModelSideEncoder(nn.Module):
-    """Shared model-side encoder with a fallback unknown-model embedding."""
+    """Fixed metadata statistics followed by a model-side linear projection."""
 
     def __init__(
         self,
-        model_to_index: dict[str, int],
-        num_models: int,
-        organization_to_index: dict[str, int],
-        family_to_index: dict[str, int],
-        name_token_to_index: dict[str, int],
+        field_value_means: dict[str, dict[str, float]] | None = None,
+        field_default_means: dict[str, float] | None = None,
+        global_mean: float = 0.5,
         p: int = MODEL_EMBED_DIM,
         output_dim: int = MODEL_VECTOR_DIM,
     ) -> None:
         super().__init__()
-        if UNKNOWN_MODEL_TOKEN not in model_to_index:
-            raise ValueError("model_to_index must contain UNKNOWN_MODEL_TOKEN.")
-        if num_models <= 0:
-            raise ValueError("num_models must be positive.")
 
         self.p = p
         self.output_dim = output_dim
-        self.model_to_index = dict(model_to_index)
-        self.organization_to_index = dict(organization_to_index)
-        self.family_to_index = dict(family_to_index)
-        self.name_token_to_index = dict(name_token_to_index)
-        self.num_models = num_models
+        self.global_mean = float(global_mean)
+        self.field_value_means = {
+            field: dict((field_value_means or {}).get(field, {}))
+            for field in METADATA_FIELDS
+        }
+        self.field_default_means = {
+            field: float((field_default_means or {}).get(field, self.global_mean))
+            for field in METADATA_FIELDS
+        }
 
-        self.model_embeddings = nn.Embedding(num_models, p)
-        self.organization_embeddings = nn.Embedding(len(organization_to_index), p)
-        self.family_embeddings = nn.Embedding(len(family_to_index), p)
-        self.name_token_embeddings = nn.Embedding(len(name_token_to_index), p)
-        self.size_projection = nn.Linear(2, p)
-        self.release_projection = nn.Linear(3, p)
-        self.output_projection = nn.Linear(6 * p, output_dim)
+        self.model_to_index = {UNKNOWN_MODEL_TOKEN: 0}
+        self.organization_to_index = {MISSING_TOKEN: 0}
+        self.family_to_index = {MISSING_TOKEN: 0}
+        self.name_token_to_index = {MISSING_TOKEN: 0}
+        self.num_models = len(self.field_value_means["model_id"])
+        self.output_projection = nn.Linear(MODEL_FEATURE_DIM, output_dim)
+        self.register_buffer("_device_anchor", torch.empty(0), persistent=False)
 
     def forward(self, metadata: dict) -> torch.Tensor:
-        model_feature = self.model_embeddings(self.model_index(metadata))
-        organization_feature = self.organization_embeddings(
-            self.shared_index(metadata.get("organization"), self.organization_to_index)
-        )
-        family_feature = self.family_embeddings(
-            self.shared_index(metadata.get("family"), self.family_to_index)
-        )
-        name_feature = self.name_feature(metadata.get("name"))
-        size_feature = self.size_projection(self.size_features(metadata))
-        release_feature = self.release_projection(self.release_features(metadata))
-
-        full_feature = torch.cat(
-            [
-                model_feature,
-                organization_feature,
-                family_feature,
-                name_feature,
-                size_feature,
-                release_feature,
-            ],
-            dim=0,
-        )
-        return self.output_projection(full_feature)
-
-    def model_index(self, metadata: dict) -> torch.Tensor:
-        model_key = model_lookup_key(metadata)
-        index = self.model_to_index.get(model_key, self.model_to_index[UNKNOWN_MODEL_TOKEN])
-        return torch.tensor(index, dtype=torch.long, device=self.model_embeddings.weight.device)
-
-    def shared_index(self, value, vocab: dict[str, int]) -> torch.Tensor:
-        key = normalize_metadata_value(value)
-        index = vocab.get(key, vocab[MISSING_TOKEN])
-        return torch.tensor(index, dtype=torch.long, device=self.model_embeddings.weight.device)
-
-    def name_feature(self, name: str | None) -> torch.Tensor:
-        token_indexes = [
-            self.name_token_to_index.get(token, self.name_token_to_index[MISSING_TOKEN])
-            for token in tokenize_name(name)
+        values = [
+            self.metadata_mean(field, metadata.get(field))
+            for field in METADATA_FIELDS
         ]
-        if not token_indexes:
-            token_indexes = [self.name_token_to_index[MISSING_TOKEN]]
-        indexes = torch.tensor(
-            token_indexes,
-            dtype=torch.long,
-            device=self.model_embeddings.weight.device,
-        )
-        return self.name_token_embeddings(indexes).mean(dim=0)
+        values.extend(numeric_model_features(metadata))
+        features = torch.tensor(values, dtype=torch.float32, device=self._device_anchor.device)
+        return self.output_projection(features)
 
-    def size_features(self, metadata: dict) -> torch.Tensor:
-        params_b = parse_params_billions(
-            metadata.get("size_params"),
-            metadata.get("name"),
-        )
-        if params_b is None:
-            values = [0.0, 1.0]
-        else:
-            values = [math.log1p(params_b), 0.0]
-        return torch.tensor(values, dtype=torch.float32, device=self.model_embeddings.weight.device)
-
-    def release_features(self, metadata: dict) -> torch.Tensor:
-        year, month = parse_release_year_month(metadata.get("release_date"))
-        if year is None:
-            values = [0.0, 0.0, 1.0]
-        else:
-            values = [(year - 2020.0) / 10.0, month / 12.0, 0.0]
-        return torch.tensor(values, dtype=torch.float32, device=self.model_embeddings.weight.device)
+    def metadata_mean(self, field: str, value) -> float:
+        key = normalize_metadata_value(value)
+        return self.field_value_means[field].get(key, self.field_default_means[field])
 
 
 class ItemQuestionEncoder(nn.Module):
@@ -383,40 +329,56 @@ def build_model_side_encoder(
     p: int = MODEL_EMBED_DIM,
     output_dim: int = MODEL_VECTOR_DIM,
 ) -> ModelSideEncoder:
-    model_to_index = {UNKNOWN_MODEL_TOKEN: 0}
-    organizations = []
-    families = []
-    names = []
-    next_index = 1
+    field_sums = {field: {} for field in METADATA_FIELDS}
+    field_counts = {field: {} for field in METADATA_FIELDS}
+    global_sum = 0.0
+    global_count = 0
 
     for example in examples:
+        label = example.get("label")
+        if label not in (0, 1, 0.0, 1.0):
+            continue
         metadata = extract_model_metadata(
             example.get("subject_content"),
             model_id=example.get("model_id"),
         )
-        aliases = model_aliases(metadata)
-        if not aliases:
-            continue
+        label = float(label)
+        global_sum += label
+        global_count += 1
 
-        organizations.append(metadata.get("organization"))
-        families.append(metadata.get("family"))
-        names.append(metadata.get("name"))
+        for field in METADATA_FIELDS:
+            key = normalize_metadata_value(metadata.get(field))
+            field_sums[field][key] = field_sums[field].get(key, 0.0) + label
+            field_counts[field][key] = field_counts[field].get(key, 0) + 1
 
-        index = next((model_to_index[alias] for alias in aliases if alias in model_to_index), None)
-        if index is None:
-            index = next_index
-            next_index += 1
-        for alias in aliases:
-            model_to_index[alias] = index
+    global_mean = global_sum / max(global_count, 1)
+    field_value_means = {}
+    field_default_means = {}
+    for field in METADATA_FIELDS:
+        value_means = {
+            key: field_sums[field][key] / field_counts[field][key]
+            for key in field_sums[field]
+        }
+        field_value_means[field] = value_means
+        field_default_means[field] = (
+            sum(value_means.values()) / len(value_means)
+            if value_means
+            else global_mean
+        )
 
-    num_models = next_index
-    print(f"Found {num_models - 1} known fixed models plus unknown fallback.")
+    value_counts = ", ".join(
+        f"{field}={len(field_value_means[field])}"
+        for field in METADATA_FIELDS
+    )
+    print(
+        f"Built fixed metadata means from {global_count} examples "
+        f"(global_mean={global_mean:.4f}; {value_counts}).",
+        flush=True,
+    )
     return ModelSideEncoder(
-        model_to_index=model_to_index,
-        num_models=num_models,
-        organization_to_index=build_shared_vocab(organizations),
-        family_to_index=build_shared_vocab(families),
-        name_token_to_index=build_name_token_vocab(names),
+        field_value_means=field_value_means,
+        field_default_means=field_default_means,
+        global_mean=global_mean,
         p=p,
         output_dim=output_dim,
     )
@@ -443,6 +405,9 @@ def save_checkpoint(
             "organization_to_index": scorer.model_encoder.organization_to_index,
             "family_to_index": scorer.model_encoder.family_to_index,
             "name_token_to_index": scorer.model_encoder.name_token_to_index,
+            "field_value_means": scorer.model_encoder.field_value_means,
+            "field_default_means": scorer.model_encoder.field_default_means,
+            "global_mean": scorer.model_encoder.global_mean,
             "model_encoder_state_dict": scorer.model_encoder.state_dict(),
             "item_heads_state_dict": {
                 "loading_head": scorer.item_encoder.loading_head.state_dict(),
@@ -468,11 +433,9 @@ def load_checkpoint(
     item_encoder_type = config.get("item_encoder_type", "transformer")
 
     model_encoder = ModelSideEncoder(
-        model_to_index=data["model_to_index"],
-        num_models=data["num_models"],
-        organization_to_index=data["organization_to_index"],
-        family_to_index=data["family_to_index"],
-        name_token_to_index=data["name_token_to_index"],
+        field_value_means=data.get("field_value_means"),
+        field_default_means=data.get("field_default_means"),
+        global_mean=float(data.get("global_mean", 0.5)),
         p=p,
         output_dim=k,
     )
@@ -553,6 +516,44 @@ def sentence_complexity_feature(sentence: str) -> list[float]:
         float(any(word in lower for word in ("prove", "derive", "explain", "justify", "reason", "infer"))),
         float(any(word in lower for word in ("not", "except", "least", "false", "incorrect"))),
     ]
+
+
+def numeric_model_features(metadata: dict) -> list[float]:
+    params_b = parse_params_billions(
+        metadata.get("size_params"),
+        metadata.get("name"),
+    )
+    log_params = 0.0 if params_b is None else clamp01(math.log1p(params_b) / math.log1p(1000.0))
+    return [
+        log_params,
+        normalized_release_date(metadata.get("release_date")),
+        frontier_developer_feature(metadata),
+    ]
+
+
+def normalized_release_date(release_date: str | None) -> float:
+    year, month = parse_release_year_month(release_date)
+    if year is None:
+        return 0.0
+    decimal_year = year + (month - 1.0) / 12.0
+    return clamp01((decimal_year - 2020.0) / 8.0)
+
+
+def frontier_developer_feature(metadata: dict) -> float:
+    text = " ".join(
+        str(metadata.get(field) or "")
+        for field in ("organization", "name", "model_id", "family")
+    ).lower()
+    frontier_markers = (
+        "anthropic",
+        "claude",
+        "openai",
+        "gpt",
+        "google",
+        "deepmind",
+        "gemini",
+    )
+    return float(any(marker in text for marker in frontier_markers))
 
 
 def item_hardness_features(item_side_info: dict) -> torch.Tensor:

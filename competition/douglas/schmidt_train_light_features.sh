@@ -1,8 +1,8 @@
 #!/bin/bash
 # Submit from the Schmidt cluster after copying/cloning this repo there:
-#   sbatch competition/douglas/schmidt_train_light.sh
+#   sbatch competition/douglas/schmidt_train_light_features.sh
 
-#SBATCH --job-name=douglas-light
+#SBATCH --job-name=douglas-light-features
 #SBATCH --output=%x-%j.out
 #SBATCH --error=%x-%j.err
 #SBATCH --partition=cs321m
@@ -36,5 +36,4 @@ fi
 export HF_HOME="${HF_HOME:-$REPO_ROOT/.hf_cache}"
 mkdir -p "$HF_HOME"
 
-LIGHT_ITEM_ENCODER="${LIGHT_ITEM_ENCODER:-features}"
-"$RUN_PYTHON" competition/douglas/training_light.py --item-encoder "$LIGHT_ITEM_ENCODER"
+"$RUN_PYTHON" competition/douglas/training_light.py --item-encoder features
