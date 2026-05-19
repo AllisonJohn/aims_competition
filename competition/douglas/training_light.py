@@ -18,7 +18,17 @@ from competition.utils.load_train_data import evaluate, load_split_data  # noqa:
 
 LIGHT_QUESTION_ENCODER_NAME = "handcrafted-item-features"
 LIGHT_ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_model_light.pt"
-LIGHT_ITEM_CACHE_PATH = Path(__file__).with_name("artifacts") / "item_feature_representations_light.pt"
+LIGHT_ITEM_CACHE_PATH = Path(__file__).with_name("artifacts") / "item_feature_representations_light_v2.pt"
+
+
+class LightDouglasModel(DouglasModel):
+    """Douglas model variant for cheap item features."""
+
+    def _item_cache_key(self, example: dict) -> str:
+        item_key = example.get("item_id") or example.get("item_content") or ""
+        benchmark = example.get("benchmark") or ""
+        condition = example.get("condition") or ""
+        return f"{benchmark}::{condition}::{item_key}"
 
 
 def main() -> None:
@@ -31,19 +41,20 @@ def main() -> None:
     )
 
     print(f"Using item encoder: {LIGHT_QUESTION_ENCODER_NAME}", flush=True)
+    print(f"Item encoder class: {full_training.ItemQuestionEncoder.__name__}", flush=True)
     print(f"Train benchmarks: {train_data['benchmark_ids']}", flush=True)
     print(f"Test benchmarks: {test_data['benchmark_ids']}", flush=True)
     print(f"Light item cache: {LIGHT_ITEM_CACHE_PATH}", flush=True)
     print(f"Light artifact: {LIGHT_ARTIFACT_PATH}", flush=True)
 
-    model = DouglasModel(
+    model = LightDouglasModel(
         k=5,
         p=8,
-        learning_rate=1e-4,
+        learning_rate=1e-3,
         weight_decay=1e-4,
-        epochs=1,
-        batch_size=64,
-        encode_batch_size=128,
+        epochs=5,
+        batch_size=512,
+        encode_batch_size=4096,
         temperature=1.0,
     )
 
