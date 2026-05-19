@@ -2,7 +2,7 @@
 # Submit from the Schmidt cluster after copying/cloning this repo there:
 #   sbatch competition/douglas/schmidt_train_light_mini.sh
 # Forward training flags after the script name, for example:
-#   sbatch competition/douglas/schmidt_train_light_mini.sh --learning-rate 3e-4 --irt-l2 1e-5 --temperature 0.7 --weight-decay 1e-5 --item-head-hidden-dim 64
+#   sbatch competition/douglas/schmidt_train_light_mini.sh --latent-dim 8 --learning-rate 3e-4 --irt-l2 1e-5 --temperature 0.7 --weight-decay 1e-5 --item-head-hidden-dim 64
 
 #SBATCH --job-name=douglas-light-mini
 #SBATCH --output=%x-%j.out

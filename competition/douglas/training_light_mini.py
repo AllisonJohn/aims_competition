@@ -14,7 +14,11 @@ if str(REPO_ROOT) not in sys.path:
 
 import competition.douglas.training as full_training  # noqa: E402
 from competition.douglas.modeling import ITEM_HEAD_HIDDEN_DIM  # noqa: E402
-from competition.douglas.training_light import LIGHT_CONFIGS, LightDouglasModel  # noqa: E402
+from competition.douglas.training_light import (  # noqa: E402
+    LIGHT_CONFIGS,
+    LightDouglasModel,
+    artifact_path_for_latent_dim,
+)
 from competition.utils.load_train_data import evaluate, load_split_data  # noqa: E402
 
 
@@ -116,13 +120,17 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=env_int("DOUGLAS_ITEM_HEAD_HIDDEN_DIM", ITEM_HEAD_HIDDEN_DIM),
     )
+    parser.add_argument("--latent-dim", type=int, default=env_int("DOUGLAS_LATENT_DIM", 4))
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = LIGHT_CONFIGS[args.item_encoder]
-    artifact_path = MINI_ARTIFACT_PATHS[args.item_encoder]
+    artifact_path = artifact_path_for_latent_dim(
+        MINI_ARTIFACT_PATHS[args.item_encoder],
+        args.latent_dim,
+    )
     item_cache_path = MINI_ITEM_CACHE_PATHS[args.item_encoder]
     encode_batch_size = args.encode_batch_size or config["encode_batch_size"]
 
@@ -153,6 +161,7 @@ def main() -> None:
         f"Training args: learning_rate={args.learning_rate} "
         f"weight_decay={args.weight_decay} irt_l2={args.irt_l2} "
         f"temperature={args.temperature} "
+        f"latent_dim={args.latent_dim} "
         f"item_head_hidden_dim={args.item_head_hidden_dim}",
         flush=True,
     )
@@ -168,7 +177,7 @@ def main() -> None:
     print(f"Mini light artifact: {artifact_path}", flush=True)
 
     model = LightDouglasModel(
-        k=4,
+        k=args.latent_dim,
         p=8,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,

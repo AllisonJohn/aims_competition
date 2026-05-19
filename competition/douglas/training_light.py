@@ -35,6 +35,12 @@ LIGHT_CONFIGS = {
 }
 
 
+def artifact_path_for_latent_dim(path: Path, latent_dim: int) -> Path:
+    if latent_dim == 4:
+        return path
+    return path.with_name(f"{path.stem}_k{latent_dim}{path.suffix}")
+
+
 class LightDouglasModel(DouglasModel):
     """Douglas model variant for cheap item features."""
 
@@ -60,12 +66,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--irt-l2", type=float, default=1e-4)
     parser.add_argument("--item-head-hidden-dim", type=int, default=ITEM_HEAD_HIDDEN_DIM)
+    parser.add_argument("--latent-dim", type=int, default=4)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = LIGHT_CONFIGS[args.item_encoder]
+    artifact_path = artifact_path_for_latent_dim(config["artifact_path"], args.latent_dim)
 
     full_training.QUESTION_ENCODER_NAME = config["encoder_name"]
     full_training.ITEM_CACHE_PATH = config["item_cache_path"]
@@ -83,6 +91,7 @@ def main() -> None:
         f"Training args: epochs={args.epochs} batch_size={args.batch_size} "
         f"learning_rate={args.learning_rate} weight_decay={args.weight_decay} "
         f"irt_l2={args.irt_l2} temperature={args.temperature} "
+        f"latent_dim={args.latent_dim} "
         f"item_head_hidden_dim={args.item_head_hidden_dim} "
         f"encode_batch_size={config['encode_batch_size']}",
         flush=True,
@@ -90,10 +99,10 @@ def main() -> None:
     print(f"Train benchmarks: {train_data['benchmark_ids']}", flush=True)
     print(f"Test benchmarks: {test_data['benchmark_ids']}", flush=True)
     print(f"Light item cache: {config['item_cache_path']}", flush=True)
-    print(f"Light artifact: {config['artifact_path']}", flush=True)
+    print(f"Light artifact: {artifact_path}", flush=True)
 
     model = LightDouglasModel(
-        k=4,
+        k=args.latent_dim,
         p=8,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
@@ -107,7 +116,7 @@ def main() -> None:
 
     print("Training light DouglasModel...", flush=True)
     model.train(train_data["examples"])
-    model.save(config["artifact_path"])
+    model.save(artifact_path)
 
     print("Evaluating light model on held-out test benchmarks...", flush=True)
     test_metrics = evaluate(model.predict, test_data["examples"])

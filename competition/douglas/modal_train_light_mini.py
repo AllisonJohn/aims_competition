@@ -9,6 +9,9 @@ Default cheap smoke test:
 
 MiniLM smoke test:
     modal run competition/douglas/modal_train_light_mini.py --item-encoder minilm
+
+K=8 smoke test:
+    modal run competition/douglas/modal_train_light_mini.py --latent-dim 8
 """
 
 from __future__ import annotations
@@ -59,6 +62,8 @@ def _remote_train_light_mini(
     weight_decay: float,
     temperature: float,
     irt_l2: float,
+    item_head_hidden_dim: int,
+    latent_dim: int,
 ) -> dict:
     import os
     import sys
@@ -70,12 +75,20 @@ def _remote_train_light_mini(
     os.environ.setdefault("HF_HOME", "/cache/hf")
 
     import competition.douglas.training as full_training
-    from competition.douglas.training_light import LIGHT_CONFIGS, LightDouglasModel
+    from competition.douglas.training_light import (
+        LIGHT_CONFIGS,
+        LightDouglasModel,
+        artifact_path_for_latent_dim,
+    )
     from competition.douglas.training_light_mini import take_binary_item_subset
     from competition.utils.load_train_data import evaluate, load_split_data
 
     config = LIGHT_CONFIGS[item_encoder]
-    artifact_path = Path(f"/tmp/douglas_model_light_mini_{item_encoder}.pt")
+    artifact_name = artifact_path_for_latent_dim(
+        Path(f"douglas_model_light_mini_{item_encoder}.pt"),
+        latent_dim,
+    ).name
+    artifact_path = Path(f"/tmp/{artifact_name}")
     item_cache_path = Path(f"/cache/douglas/item_representations_light_mini_{item_encoder}.pt")
     item_cache_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -108,20 +121,22 @@ def _remote_train_light_mini(
     print(
         f"Mini limits: train_items={train_items} train_rows={len(train_examples)} "
         f"test_items={test_items} test_rows={len(test_examples)} epochs={epochs} "
-        f"batch_size={batch_size} encode_batch_size={encode_batch_size}",
+        f"batch_size={batch_size} encode_batch_size={encode_batch_size} "
+        f"latent_dim={latent_dim} item_head_hidden_dim={item_head_hidden_dim}",
         flush=True,
     )
     print(f"Modal item cache: {item_cache_path}", flush=True)
     print(f"Modal artifact: {artifact_path}", flush=True)
 
     model = LightDouglasModel(
-        k=4,
+        k=latent_dim,
         p=8,
         learning_rate=learning_rate,
         weight_decay=weight_decay,
         epochs=epochs,
         batch_size=batch_size,
         encode_batch_size=encode_batch_size,
+        item_head_hidden_dim=item_head_hidden_dim,
         temperature=temperature,
         irt_l2=irt_l2,
         device="cuda" if torch.cuda.is_available() else "cpu",
@@ -138,7 +153,7 @@ def _remote_train_light_mini(
 
     return {
         "artifact_bytes": artifact_path.read_bytes(),
-        "artifact_name": artifact_path.name,
+        "artifact_name": artifact_name,
         "metrics": metrics,
         "train_benchmarks": train_data["benchmark_ids"],
         "test_benchmarks": test_data["benchmark_ids"],
@@ -182,6 +197,8 @@ def main(
     weight_decay: float = 1e-4,
     temperature: float = 1.0,
     irt_l2: float = 1e-4,
+    item_head_hidden_dim: int = 128,
+    latent_dim: int = 4,
     use_gpu: bool = False,
 ) -> None:
     if item_encoder not in {"features", "minilm"}:
@@ -203,6 +220,8 @@ def main(
         "weight_decay": weight_decay,
         "temperature": temperature,
         "irt_l2": irt_l2,
+        "item_head_hidden_dim": item_head_hidden_dim,
+        "latent_dim": latent_dim,
     }
 
     remote_fn = train_light_mini_gpu_remote if use_gpu or item_encoder == "minilm" else train_light_mini_cpu_remote
