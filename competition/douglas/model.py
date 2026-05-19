@@ -19,6 +19,7 @@ from torch import nn
 LOCAL_SMOKE_TEST_ENV = "PREDICTIVE_EVAL_LOCAL_SMOKE_TEST"
 ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_model.pt"
 SUBMIT_ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_submit_features.pt"
+PREDICTION_TEMPERATURE = 1.5
 
 MISSING_TOKEN = "__missing__"
 UNKNOWN_MODEL_TOKEN = "__unknown_model__"
@@ -502,6 +503,7 @@ try:
             if not artifact_path.exists():
                 raise FileNotFoundError(f"Missing model artifact: {artifact_path}")
             SCORER = load_checkpoint(artifact_path)
+            SCORER.temperature = PREDICTION_TEMPERATURE
         except Exception as exc:
             LOAD_ERRORS.append((artifact_path, exc))
     if SCORER is None:
