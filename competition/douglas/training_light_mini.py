@@ -1,4 +1,4 @@
-"""MiniLM-based smoke test for Douglas's light training path."""
+"""Small-subset smoke test for Douglas's light training path."""
 
 from __future__ import annotations
 
@@ -13,21 +13,31 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import competition.douglas.training as full_training  # noqa: E402
-from competition.douglas.training import DouglasModel  # noqa: E402
+from competition.douglas.training_light import LIGHT_CONFIGS, LightDouglasModel  # noqa: E402
 from competition.utils.load_train_data import evaluate, load_split_data  # noqa: E402
 
 
-MINILM_ENCODER_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-MINI_LIGHT_ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_model_light_mini.pt"
-MINI_LIGHT_ITEM_CACHE_PATH = (
-    Path(__file__).with_name("artifacts") / "item_representations_light_mini_minilm_v1.pt"
-)
+MINI_ARTIFACT_PATHS = {
+    "features": Path(__file__).with_name("artifacts") / "douglas_model_light_mini_features.pt",
+    "minilm": Path(__file__).with_name("artifacts") / "douglas_model_light_mini_minilm.pt",
+}
+MINI_ITEM_CACHE_PATHS = {
+    "features": Path(__file__).with_name("artifacts") / "item_feature_representations_light_mini_v1.pt",
+    "minilm": Path(__file__).with_name("artifacts") / "item_representations_light_mini_minilm_v1.pt",
+}
 
 
 def env_int(name: str, default: int) -> int:
     value = os.environ.get(name)
     if value is None or not value.strip():
         return default
+    return int(value)
+
+
+def env_optional_int(name: str) -> int | None:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return None
     return int(value)
 
 
@@ -77,7 +87,13 @@ def take_binary_item_subset(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a tiny MiniLM Douglas training/eval smoke test.",
+        description="Run a tiny Douglas light training/eval smoke test.",
+    )
+    parser.add_argument(
+        "--item-encoder",
+        choices=sorted(LIGHT_CONFIGS),
+        default=os.environ.get("LIGHT_ITEM_ENCODER", "features"),
+        help="Same encoder switch as training_light.py.",
     )
     parser.add_argument("--train-items", type=int, default=env_int("DOUGLAS_MINI_TRAIN_ITEMS", 256))
     parser.add_argument("--test-items", type=int, default=env_int("DOUGLAS_MINI_TEST_ITEMS", 128))
@@ -88,7 +104,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--encode-batch-size",
         type=int,
-        default=env_int("DOUGLAS_MINI_ENCODE_BATCH_SIZE", 256),
+        default=env_optional_int("DOUGLAS_MINI_ENCODE_BATCH_SIZE"),
     )
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -99,9 +115,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    config = LIGHT_CONFIGS[args.item_encoder]
+    artifact_path = MINI_ARTIFACT_PATHS[args.item_encoder]
+    item_cache_path = MINI_ITEM_CACHE_PATHS[args.item_encoder]
+    encode_batch_size = args.encode_batch_size or config["encode_batch_size"]
 
-    full_training.QUESTION_ENCODER_NAME = MINILM_ENCODER_NAME
-    full_training.ITEM_CACHE_PATH = MINI_LIGHT_ITEM_CACHE_PATH
+    full_training.QUESTION_ENCODER_NAME = config["encoder_name"]
+    full_training.ITEM_CACHE_PATH = item_cache_path
+    if config["item_encoder_cls"] is not None:
+        full_training.ItemQuestionEncoder = config["item_encoder_cls"]
 
     train_data, _valid_data, test_data = load_split_data(
         split_ratios=(0.8, 0.0, 0.2),
@@ -117,38 +139,40 @@ def main() -> None:
         max_rows=args.test_rows,
     )
 
-    print("Running Douglas MiniLM mini training check.", flush=True)
-    print(f"Using item encoder: {MINILM_ENCODER_NAME}", flush=True)
+    print("Running Douglas light mini training check.", flush=True)
+    print(f"Light mini variant: {args.item_encoder}", flush=True)
+    print(f"Using item encoder: {config['encoder_name']}", flush=True)
+    print(f"Item encoder class: {full_training.ItemQuestionEncoder.__name__}", flush=True)
     print(f"Train benchmarks: {train_data['benchmark_ids']}", flush=True)
     print(f"Test benchmarks: {test_data['benchmark_ids']}", flush=True)
     print(
         f"Mini limits: train_items={args.train_items} train_rows={len(train_examples)} "
         f"test_items={args.test_items} test_rows={len(test_examples)} epochs={args.epochs} "
-        f"batch_size={args.batch_size} encode_batch_size={args.encode_batch_size}",
+        f"batch_size={args.batch_size} encode_batch_size={encode_batch_size}",
         flush=True,
     )
-    print(f"Mini light item cache: {MINI_LIGHT_ITEM_CACHE_PATH}", flush=True)
-    print(f"Mini light artifact: {MINI_LIGHT_ARTIFACT_PATH}", flush=True)
+    print(f"Mini light item cache: {item_cache_path}", flush=True)
+    print(f"Mini light artifact: {artifact_path}", flush=True)
 
-    model = DouglasModel(
+    model = LightDouglasModel(
         k=4,
         p=8,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         epochs=args.epochs,
         batch_size=args.batch_size,
-        encode_batch_size=args.encode_batch_size,
+        encode_batch_size=encode_batch_size,
         temperature=args.temperature,
         irt_l2=args.irt_l2,
     )
 
-    print("Training mini MiniLM DouglasModel...", flush=True)
+    print("Training mini light DouglasModel...", flush=True)
     model.train(train_examples)
-    model.save(MINI_LIGHT_ARTIFACT_PATH)
+    model.save(artifact_path)
 
-    print("Evaluating mini MiniLM model on capped held-out test rows...", flush=True)
+    print("Evaluating mini light model on capped held-out test rows...", flush=True)
     test_metrics = evaluate(model.predict, test_examples)
-    print(f"Mini MiniLM test metrics: {test_metrics}", flush=True)
+    print(f"Mini light {args.item_encoder} test metrics: {test_metrics}", flush=True)
 
 
 if __name__ == "__main__":
