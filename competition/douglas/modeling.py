@@ -15,6 +15,7 @@ MODEL_VECTOR_DIM = 5
 QUESTION_ENCODER_NAME = "sentence-transformers/all-mpnet-base-v2"
 MAX_QUESTION_TOKENS = 256
 SENTENCE_COMPLEXITY_FEATURE_DIM = 16
+ITEM_FEATURE_DIM = 73
 CLIP_LO = 1e-7
 CLIP_HI = 1.0 - 1e-7
 
@@ -160,6 +161,8 @@ class ItemQuestionEncoder(nn.Module):
     sentence representations, then updates only the small loading/bias heads.
     """
 
+    item_encoder_type = "transformer"
+
     def __init__(
         self,
         encoder_name: str = QUESTION_ENCODER_NAME,
@@ -262,6 +265,54 @@ class ItemQuestionEncoder(nn.Module):
         summed = torch.sum(token_embeddings * mask, dim=1)
         counts = torch.clamp(mask.sum(dim=1), min=1e-9)
         return summed / counts
+
+
+class HandcraftedItemQuestionEncoder(nn.Module):
+    """Encode one-hot item hardness features into loadings and bias."""
+
+    item_encoder_type = "handcrafted"
+
+    def __init__(
+        self,
+        encoder_name: str = "handcrafted-item-features",
+        loading_dim: int = MODEL_VECTOR_DIM,
+        max_length: int = MAX_QUESTION_TOKENS,
+        freeze_backbone: bool = True,
+        local_files_only: bool = False,
+        cache_dir: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.encoder_name = encoder_name
+        self.loading_dim = loading_dim
+        self.max_length = max_length
+        self.representation_dim = ITEM_FEATURE_DIM
+        self.loading_head = nn.Linear(self.representation_dim, loading_dim)
+        self.bias_head = nn.Linear(self.representation_dim, 1)
+
+    def forward(self, item_side_info: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        representations = self.encode_sentence_representations(item_side_info)
+        return self.forward_from_representations(representations)
+
+    def encode_sentence_representations(self, item_side_info: dict) -> torch.Tensor:
+        return item_hardness_features(item_side_info).to(self.loading_head.weight.device).unsqueeze(0)
+
+    def encode_sentence_representations_batch(
+        self,
+        item_side_infos: list[dict],
+    ) -> list[torch.Tensor]:
+        device = self.loading_head.weight.device
+        return [
+            item_hardness_features(item_side_info).to(device).unsqueeze(0)
+            for item_side_info in item_side_infos
+        ]
+
+    def forward_from_representations(
+        self,
+        sentence_representations: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        loading = torch.softmax(self.loading_head(sentence_representations), dim=-1)
+        bias = self.bias_head(sentence_representations).squeeze(-1)
+        return loading.mean(dim=0), bias.mean()
 
 
 class DouglasScorer(nn.Module):
@@ -377,9 +428,15 @@ def save_checkpoint(
     config: dict,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    saved_config = dict(config)
+    saved_config["item_encoder_type"] = getattr(
+        scorer.item_encoder,
+        "item_encoder_type",
+        "transformer",
+    )
     torch.save(
         {
-            "config": config,
+            "config": saved_config,
             "temperature": scorer.temperature,
             "model_to_index": scorer.model_encoder.model_to_index,
             "num_models": scorer.model_encoder.num_models,
@@ -408,6 +465,7 @@ def load_checkpoint(
     p = int(config.get("p", MODEL_EMBED_DIM))
     encoder_name = config.get("encoder_name", QUESTION_ENCODER_NAME)
     max_length = int(config.get("max_length", MAX_QUESTION_TOKENS))
+    item_encoder_type = config.get("item_encoder_type", "transformer")
 
     model_encoder = ModelSideEncoder(
         model_to_index=data["model_to_index"],
@@ -420,7 +478,12 @@ def load_checkpoint(
     )
     model_encoder.load_state_dict(data["model_encoder_state_dict"])
 
-    item_encoder = ItemQuestionEncoder(
+    item_encoder_cls = (
+        HandcraftedItemQuestionEncoder
+        if item_encoder_type == "handcrafted"
+        else ItemQuestionEncoder
+    )
+    item_encoder = item_encoder_cls(
         encoder_name=encoder_name,
         loading_dim=k,
         max_length=max_length,
@@ -490,6 +553,149 @@ def sentence_complexity_feature(sentence: str) -> list[float]:
         float(any(word in lower for word in ("prove", "derive", "explain", "justify", "reason", "infer"))),
         float(any(word in lower for word in ("not", "except", "least", "false", "incorrect"))),
     ]
+
+
+def item_hardness_features(item_side_info: dict) -> torch.Tensor:
+    text = item_side_info.get("item_content") or ""
+    lower = text.lower()
+    sentences = split_sentences(text)
+    words = re.findall(r"[A-Za-z0-9_]+", text)
+    unique_words = {word.lower() for word in words}
+
+    char_count = len(text)
+    word_count = len(words)
+    sentence_count = len(sentences)
+    avg_word_len = (
+        sum(len(word) for word in words) / word_count
+        if word_count
+        else 0.0
+    )
+    avg_sentence_words = word_count / max(sentence_count, 1)
+    unique_ratio = len(unique_words) / max(word_count, 1)
+
+    digit_count = sum(char.isdigit() for char in text)
+    punctuation_count = sum(char in ".,;:!?()[]{}" for char in text)
+    uppercase_count = sum(char.isupper() for char in text)
+    math_symbols = "∫∑∂√≤≥≠≈∞πθλμ+-*/=<>^"
+    math_symbol_count = sum(char in math_symbols for char in text)
+    newline_count = text.count("\n")
+    choice_count = count_choice_markers(text)
+    code_marker_count = count_code_markers(text)
+    latex_marker_count = count_latex_markers(text)
+    comparison_count = len(re.findall(r"[A-Za-z0-9]\s*(=|<|>|≤|≥|≈|≠)\s*[A-Za-z0-9]", text))
+    constraint_count = len(
+        re.findall(
+            r"\b(if|unless|except|exactly|at least|at most|minimum|maximum|must|cannot|not)\b",
+            lower,
+        )
+    )
+
+    features = [
+        clamp01(math.log1p(char_count) / 10.0),
+        clamp01(math.log1p(word_count) / 8.0),
+        clamp01(math.log1p(sentence_count) / 5.0),
+        clamp01(avg_word_len / 20.0),
+        clamp01(avg_sentence_words / 80.0),
+        clamp01(unique_ratio),
+        safe_density(digit_count, char_count),
+        safe_density(punctuation_count, char_count),
+        safe_density(uppercase_count, char_count),
+        safe_density(math_symbol_count, char_count),
+        safe_density(newline_count, max(char_count / 80.0, 1.0)),
+        clamp01(choice_count / 10.0),
+        clamp01(code_marker_count / 20.0),
+        clamp01(latex_marker_count / 20.0),
+        clamp01(comparison_count / 20.0),
+        clamp01(constraint_count / 20.0),
+    ]
+    features.extend(one_hot_bin(char_count, [128, 512, 2048, 8192]))
+    features.extend(one_hot_bin(word_count, [25, 100, 400, 1000]))
+    features.extend(one_hot_bin(sentence_count, [1, 3, 8, 20]))
+    features.extend(one_hot_bin(newline_count, [0, 2, 8, 25]))
+    features.extend(one_hot_bin(choice_count, [0, 2, 4, 6]))
+    features.extend(one_hot_bin(math_symbol_count, [0, 2, 8, 25]))
+    features.extend(one_hot_bin(code_marker_count, [0, 1, 4, 12]))
+    features.extend(one_hot_bin(latex_marker_count, [0, 1, 4, 12]))
+    features.extend(one_hot_bin(safe_density(punctuation_count, char_count), [0.02, 0.06, 0.12, 0.20]))
+    features.extend(
+        [
+            float("?" in text),
+            float(math_symbol_count > 0),
+            float(latex_marker_count > 0),
+            float(comparison_count > 0),
+            float(code_marker_count > 0),
+            float(choice_count > 0),
+            float(has_table_shape(text)),
+            float(any(marker in lower for marker in ("image", "figure", "<img", ".png", ".jpg"))),
+            float(any(word in lower for word in ("prove", "derive", "proof", "theorem"))),
+            float(any(word in lower for word in ("explain", "justify", "reason", "infer"))),
+            float(any(word in lower for word in ("not", "except", "false", "incorrect"))),
+            float(constraint_count >= 2),
+        ]
+    )
+    if len(features) != ITEM_FEATURE_DIM:
+        raise ValueError(f"Expected {ITEM_FEATURE_DIM} item features, got {len(features)}.")
+    return torch.tensor(features, dtype=torch.float32)
+
+
+def one_hot_bin(value: float, thresholds: list[float]) -> list[float]:
+    index = 0
+    while index < len(thresholds) and value > thresholds[index]:
+        index += 1
+    return [float(position == index) for position in range(len(thresholds) + 1)]
+
+
+def safe_density(count: float, total: float) -> float:
+    return clamp01(count / max(total, 1.0))
+
+
+def clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def count_choice_markers(text: str) -> int:
+    return len(
+        re.findall(
+            r"(?im)(?:^|\s)(?:\(?[A-H]\)|[A-H][\).:])\s+",
+            text,
+        )
+    )
+
+
+def count_code_markers(text: str) -> int:
+    lower = text.lower()
+    markers = [
+        "```",
+        "def ",
+        "class ",
+        "import ",
+        "return ",
+        "for ",
+        "while ",
+        "function",
+        "traceback",
+        "error:",
+        "{",
+        "}",
+        "=>",
+        "::",
+    ]
+    return sum(lower.count(marker) for marker in markers)
+
+
+def count_latex_markers(text: str) -> int:
+    return len(
+        re.findall(
+            r"\$|\\\(|\\\[|\\frac|\\sum|\\int|\\sqrt|\\log|\\mathbb|\\begin",
+            text,
+        )
+    )
+
+
+def has_table_shape(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    table_like_lines = sum("|" in line or "\t" in line for line in lines)
+    return table_like_lines >= 2
 
 
 def model_lookup_key(metadata: dict) -> str | None:
