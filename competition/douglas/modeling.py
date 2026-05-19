@@ -23,6 +23,21 @@ ITEM_HEAD_HIDDEN_DIM = 128
 CLIP_LO = 1e-7
 CLIP_HI = 1.0 - 1e-7
 
+LEFT_MODEL_ID_KEYS = ("model_a_id", "model_id_a", "left_model_id", "subject_a_id", "subject_id_a")
+RIGHT_MODEL_ID_KEYS = ("model_b_id", "model_id_b", "right_model_id", "subject_b_id", "subject_id_b")
+LEFT_SUBJECT_CONTENT_KEYS = (
+    "subject_a_content",
+    "model_a_content",
+    "left_subject_content",
+    "subject_content_a",
+)
+RIGHT_SUBJECT_CONTENT_KEYS = (
+    "subject_b_content",
+    "model_b_content",
+    "right_subject_content",
+    "subject_content_b",
+)
+
 
 def extract_model_metadata(subject_content: str | None, model_id: str | None = None) -> dict:
     metadata = {
@@ -52,6 +67,43 @@ def extract_model_metadata(subject_content: str | None, model_id: str | None = N
         if key:
             metadata[key] = value.strip() or None
     return metadata
+
+
+def first_present(mapping: dict, keys: tuple[str, ...]):
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def is_pairwise_input(input: dict) -> bool:
+    """Return True when an input contains two visible model sides."""
+    has_left = (
+        first_present(input, LEFT_MODEL_ID_KEYS) is not None
+        or first_present(input, LEFT_SUBJECT_CONTENT_KEYS) is not None
+    )
+    has_right = (
+        first_present(input, RIGHT_MODEL_ID_KEYS) is not None
+        or first_present(input, RIGHT_SUBJECT_CONTENT_KEYS) is not None
+    )
+    return has_left and has_right
+
+
+def extract_left_model_metadata(input: dict) -> dict:
+    subject_content = first_present(input, LEFT_SUBJECT_CONTENT_KEYS)
+    model_id = first_present(input, LEFT_MODEL_ID_KEYS)
+    if subject_content is None and model_id is None:
+        subject_content = input.get("subject_content")
+        model_id = input.get("model_id")
+    return extract_model_metadata(subject_content, model_id=model_id)
+
+
+def extract_right_model_metadata(input: dict) -> dict:
+    return extract_model_metadata(
+        first_present(input, RIGHT_SUBJECT_CONTENT_KEYS),
+        model_id=first_present(input, RIGHT_MODEL_ID_KEYS),
+    )
 
 
 class ModelSideEncoder(nn.Module):
@@ -115,6 +167,7 @@ class ItemQuestionEncoder(nn.Module):
         encoder_name: str = QUESTION_ENCODER_NAME,
         loading_dim: int = MODEL_VECTOR_DIM,
         max_length: int = MAX_QUESTION_TOKENS,
+        hidden_dim: int = ITEM_HEAD_HIDDEN_DIM,
         freeze_backbone: bool = True,
         local_files_only: bool = False,
         cache_dir: str | None = None,
@@ -125,6 +178,7 @@ class ItemQuestionEncoder(nn.Module):
         self.encoder_name = encoder_name
         self.loading_dim = loading_dim
         self.max_length = max_length
+        self.hidden_dim = hidden_dim
         self.tokenizer = AutoTokenizer.from_pretrained(
             encoder_name,
             cache_dir=cache_dir,
@@ -138,8 +192,8 @@ class ItemQuestionEncoder(nn.Module):
 
         backbone_dim = self.backbone.config.hidden_size
         self.representation_dim = backbone_dim + SENTENCE_COMPLEXITY_FEATURE_DIM
-        self.loading_head = build_item_head(self.representation_dim, loading_dim)
-        self.bias_head = build_item_head(self.representation_dim, 1)
+        self.loading_head = build_item_head(self.representation_dim, loading_dim, hidden_dim=hidden_dim)
+        self.bias_head = build_item_head(self.representation_dim, 1, hidden_dim=hidden_dim)
 
         if freeze_backbone:
             for parameter in self.backbone.parameters():
@@ -224,6 +278,7 @@ class HandcraftedItemQuestionEncoder(nn.Module):
         encoder_name: str = "handcrafted-item-features",
         loading_dim: int = MODEL_VECTOR_DIM,
         max_length: int = MAX_QUESTION_TOKENS,
+        hidden_dim: int = ITEM_HEAD_HIDDEN_DIM,
         freeze_backbone: bool = True,
         local_files_only: bool = False,
         cache_dir: str | None = None,
@@ -232,9 +287,10 @@ class HandcraftedItemQuestionEncoder(nn.Module):
         self.encoder_name = encoder_name
         self.loading_dim = loading_dim
         self.max_length = max_length
+        self.hidden_dim = hidden_dim
         self.representation_dim = ITEM_FEATURE_DIM
-        self.loading_head = build_item_head(self.representation_dim, loading_dim)
-        self.bias_head = build_item_head(self.representation_dim, 1)
+        self.loading_head = build_item_head(self.representation_dim, loading_dim, hidden_dim=hidden_dim)
+        self.bias_head = build_item_head(self.representation_dim, 1, hidden_dim=hidden_dim)
 
     def forward(self, item_side_info: dict) -> tuple[torch.Tensor, torch.Tensor]:
         representations = self.encode_sentence_representations(item_side_info)
@@ -266,7 +322,7 @@ class HandcraftedItemQuestionEncoder(nn.Module):
 
 
 class DouglasScorer(nn.Module):
-    """Compute sigmoid(U_i dot V_j + z_j) for a model-item pair."""
+    """Compute absolute or pairwise IRT probabilities."""
 
     def __init__(
         self,
@@ -287,23 +343,45 @@ class DouglasScorer(nn.Module):
         input: dict,
         item_representations: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        model_side_info = extract_model_metadata(
-            input.get("subject_content"),
-            model_id=input.get("model_id"),
-        )
+        model_side_info = extract_left_model_metadata(input)
         U_i = self.model_encoder(model_side_info)
         if item_representations is None:
             item_representations = self.cached_item_representations(input)
         V_j, z_j = self.item_encoder.forward_from_representations(item_representations)
         return U_i, V_j, z_j
 
+    def encode_pairwise(
+        self,
+        input: dict,
+        item_representations: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        U_a = self.model_encoder(extract_left_model_metadata(input))
+        U_b = self.model_encoder(extract_right_model_metadata(input))
+        if item_representations is None:
+            item_representations = self.cached_item_representations(input)
+        V_j, z_j = self.item_encoder.forward_from_representations(item_representations)
+        return U_a, U_b, V_j, z_j
+
     def score_logit(
         self,
         input: dict,
         item_representations: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        if is_pairwise_input(input):
+            return self.score_pairwise_logit(input, item_representations=item_representations)
         U_i, V_j, z_j = self.encode_pair(input, item_representations=item_representations)
         return torch.dot(U_i, V_j) + z_j
+
+    def score_pairwise_logit(
+        self,
+        input: dict,
+        item_representations: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        U_a, U_b, V_j, z_j = self.encode_pairwise(
+            input,
+            item_representations=item_representations,
+        )
+        return torch.dot(U_a - U_b, V_j) + z_j
 
     def forward(
         self,
@@ -345,18 +423,25 @@ def build_model_side_encoder(
         label = example.get("label")
         if label not in (0, 1, 0.0, 1.0):
             continue
-        metadata = extract_model_metadata(
-            example.get("subject_content"),
-            model_id=example.get("model_id"),
-        )
         label = float(label)
-        global_sum += label
-        global_count += 1
+        if is_pairwise_input(example):
+            metadata_labels = (
+                (extract_left_model_metadata(example), label),
+                (extract_right_model_metadata(example), 1.0 - label),
+            )
+        else:
+            metadata_labels = (
+                (extract_left_model_metadata(example), label),
+            )
 
-        for field in METADATA_FIELDS:
-            key = normalize_metadata_value(metadata.get(field))
-            field_sums[field][key] = field_sums[field].get(key, 0.0) + label
-            field_counts[field][key] = field_counts[field].get(key, 0) + 1
+        for metadata, metadata_label in metadata_labels:
+            global_sum += metadata_label
+            global_count += 1
+
+            for field in METADATA_FIELDS:
+                key = normalize_metadata_value(metadata.get(field))
+                field_sums[field][key] = field_sums[field].get(key, 0.0) + metadata_label
+                field_counts[field][key] = field_counts[field].get(key, 0) + 1
 
     global_mean = global_sum / max(global_count, 1)
     field_value_means = {}
@@ -403,6 +488,11 @@ def save_checkpoint(
         "item_encoder_type",
         "transformer",
     )
+    saved_config["item_head_hidden_dim"] = getattr(
+        scorer.item_encoder,
+        "hidden_dim",
+        ITEM_HEAD_HIDDEN_DIM,
+    )
     torch.save(
         {
             "config": saved_config,
@@ -438,6 +528,7 @@ def load_checkpoint(
     encoder_name = config.get("encoder_name", QUESTION_ENCODER_NAME)
     max_length = int(config.get("max_length", MAX_QUESTION_TOKENS))
     item_encoder_type = config.get("item_encoder_type", "transformer")
+    item_head_hidden_dim = int(config.get("item_head_hidden_dim", ITEM_HEAD_HIDDEN_DIM))
 
     model_encoder = ModelSideEncoder(
         field_value_means=data.get("field_value_means"),
@@ -457,6 +548,7 @@ def load_checkpoint(
         encoder_name=encoder_name,
         loading_dim=k,
         max_length=max_length,
+        hidden_dim=item_head_hidden_dim,
         freeze_backbone=True,
         local_files_only=local_files_only,
         cache_dir=cache_dir,
@@ -490,11 +582,15 @@ def render_item_encoder_text(item_side_info: dict) -> str:
     return f"benchmark: {benchmark}\ncondition: {condition}\nitem: {item_content}"
 
 
-def build_item_head(input_dim: int, output_dim: int) -> nn.Sequential:
+def build_item_head(
+    input_dim: int,
+    output_dim: int,
+    hidden_dim: int = ITEM_HEAD_HIDDEN_DIM,
+) -> nn.Sequential:
     return nn.Sequential(
-        nn.Linear(input_dim, ITEM_HEAD_HIDDEN_DIM),
+        nn.Linear(input_dim, hidden_dim),
         nn.LeakyReLU(negative_slope=0.01),
-        nn.Linear(ITEM_HEAD_HIDDEN_DIM, output_dim),
+        nn.Linear(hidden_dim, output_dim),
     )
 
 

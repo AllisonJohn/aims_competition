@@ -12,7 +12,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import competition.douglas.training as full_training  # noqa: E402
-from competition.douglas.modeling import HandcraftedItemQuestionEncoder  # noqa: E402
+from competition.douglas.modeling import ITEM_HEAD_HIDDEN_DIM, HandcraftedItemQuestionEncoder  # noqa: E402
 from competition.douglas.training import DouglasModel  # noqa: E402
 from competition.utils.load_train_data import evaluate, load_split_data  # noqa: E402
 
@@ -59,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--irt-l2", type=float, default=1e-4)
+    parser.add_argument("--item-head-hidden-dim", type=int, default=ITEM_HEAD_HIDDEN_DIM)
     return parser.parse_args()
 
 
@@ -78,6 +79,14 @@ def main() -> None:
     print(f"Light variant: {args.item_encoder}", flush=True)
     print(f"Using item encoder: {config['encoder_name']}", flush=True)
     print(f"Item encoder class: {full_training.ItemQuestionEncoder.__name__}", flush=True)
+    print(
+        f"Training args: epochs={args.epochs} batch_size={args.batch_size} "
+        f"learning_rate={args.learning_rate} weight_decay={args.weight_decay} "
+        f"irt_l2={args.irt_l2} temperature={args.temperature} "
+        f"item_head_hidden_dim={args.item_head_hidden_dim} "
+        f"encode_batch_size={config['encode_batch_size']}",
+        flush=True,
+    )
     print(f"Train benchmarks: {train_data['benchmark_ids']}", flush=True)
     print(f"Test benchmarks: {test_data['benchmark_ids']}", flush=True)
     print(f"Light item cache: {config['item_cache_path']}", flush=True)
@@ -91,6 +100,7 @@ def main() -> None:
         epochs=args.epochs,
         batch_size=args.batch_size,
         encode_batch_size=config["encode_batch_size"],
+        item_head_hidden_dim=args.item_head_hidden_dim,
         temperature=args.temperature,
         irt_l2=args.irt_l2,
     )

@@ -19,10 +19,13 @@ from competition.douglas.modeling import (  # noqa: E402
     MODEL_EMBED_DIM,
     MODEL_VECTOR_DIM,
     QUESTION_ENCODER_NAME,
+    ITEM_HEAD_HIDDEN_DIM,
     DouglasScorer,
     ItemQuestionEncoder,
     build_model_side_encoder,
-    extract_model_metadata,
+    extract_left_model_metadata,
+    extract_right_model_metadata,
+    is_pairwise_input,
     save_checkpoint,
 )
 from competition.utils.load_train_data import evaluate, load_split_data  # noqa: E402
@@ -47,8 +50,17 @@ class IRTFactorModel(nn.Module):
         nn.init.zeros_(self.item_loading_logits.weight)
         nn.init.zeros_(self.item_bias.weight)
 
-    def forward(self, model_indexes: torch.Tensor, item_indexes: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        model_indexes: torch.Tensor,
+        item_indexes: torch.Tensor,
+        right_model_indexes: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         U_i = self.model_factors(model_indexes)
+        if right_model_indexes is not None:
+            right_safe = right_model_indexes.clamp(min=0)
+            right_mask = (right_model_indexes >= 0).to(U_i.dtype).unsqueeze(-1)
+            U_i = U_i - self.model_factors(right_safe) * right_mask
         V_j = torch.softmax(self.item_loading_logits(item_indexes), dim=-1)
         z_j = self.item_bias(item_indexes).squeeze(-1)
         return (U_i * V_j).sum(dim=-1) + z_j
@@ -66,6 +78,7 @@ class DouglasModel:
         epochs: int = 1,
         batch_size: int = 64,
         encode_batch_size: int = 128,
+        item_head_hidden_dim: int = ITEM_HEAD_HIDDEN_DIM,
         temperature: float = 1.0,
         irt_l2: float = 1e-4,
         device: str | None = None,
@@ -77,16 +90,30 @@ class DouglasModel:
         self.epochs = epochs
         self.batch_size = batch_size
         self.encode_batch_size = encode_batch_size
+        self.item_head_hidden_dim = item_head_hidden_dim
         self.temperature = temperature
         self.irt_l2 = irt_l2
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.scorer: DouglasScorer | None = None
 
     def train(self, examples) -> None:
+        print(
+            "DouglasModel config: "
+            f"k={self.k} p={self.p} epochs={self.epochs} batch_size={self.batch_size} "
+            f"encode_batch_size={self.encode_batch_size} item_head_hidden_dim={self.item_head_hidden_dim} "
+            f"lr={self.learning_rate} "
+            f"weight_decay={self.weight_decay} irt_l2={self.irt_l2} "
+            f"temperature={self.temperature} device={self.device}",
+            flush=True,
+        )
+        print("[stage 1/5] Materializing binary training examples...", flush=True)
         examples = self._materialize_binary_examples(examples)
+        print("[stage 2/5] Indexing model/item observations...", flush=True)
         indexed = self._build_indexed_training_data(examples)
+        print("[stage 3/5] Fitting latent IRT factors...", flush=True)
         irt_model = self._fit_irt_factors(indexed)
 
+        print("[stage 4/5] Fitting metadata -> U_i predictor...", flush=True)
         model_encoder = build_model_side_encoder(examples, p=self.p, output_dim=self.k).to(self.device)
         self._fit_model_side_encoder(
             model_encoder=model_encoder,
@@ -94,9 +121,16 @@ class DouglasModel:
             irt_model=irt_model,
         )
 
+        print("[stage 5/5] Fitting item content -> V_j,z_j predictor...", flush=True)
+        print(
+            f"Initializing item encoder {ItemQuestionEncoder.__name__} "
+            f"with encoder_name={QUESTION_ENCODER_NAME!r}",
+            flush=True,
+        )
         item_encoder = ItemQuestionEncoder(
             encoder_name=QUESTION_ENCODER_NAME,
             loading_dim=self.k,
+            hidden_dim=self.item_head_hidden_dim,
             freeze_backbone=True,
         ).to(self.device)
         self.scorer = DouglasScorer(
@@ -126,6 +160,7 @@ class DouglasModel:
         ).to(self.device)
         dataset = TensorDataset(
             indexed["model_indexes"],
+            indexed["right_model_indexes"],
             indexed["item_indexes"],
             indexed["labels"],
         )
@@ -133,6 +168,12 @@ class DouglasModel:
             dataset,
             batch_size=self.batch_size,
             shuffle=True,
+        )
+        print(
+            f"IRT setup: models={len(indexed['model_to_index'])} "
+            f"items={len(indexed['item_to_index'])} batches={len(loader)} "
+            f"lr={self.learning_rate} l2={self.irt_l2}",
+            flush=True,
         )
         optimizer = AdamW(irt_model.parameters(), lr=self.learning_rate, weight_decay=0.0)
         criterion = nn.BCEWithLogitsLoss()
@@ -142,15 +183,24 @@ class DouglasModel:
             total_loss = 0.0
             total_count = 0
 
-            for batch_number, (model_indexes, item_indexes, labels) in enumerate(loader, start=1):
+            for batch_number, (
+                model_indexes,
+                right_model_indexes,
+                item_indexes,
+                labels,
+            ) in enumerate(loader, start=1):
                 model_indexes = model_indexes.to(self.device)
+                right_model_indexes = right_model_indexes.to(self.device)
                 item_indexes = item_indexes.to(self.device)
                 labels = labels.to(self.device)
 
                 optimizer.zero_grad()
-                logits = irt_model(model_indexes, item_indexes)
+                logits = irt_model(model_indexes, item_indexes, right_model_indexes)
                 bce_loss = criterion(logits, labels)
                 U_i = irt_model.model_factors(model_indexes)
+                right_safe = right_model_indexes.clamp(min=0)
+                right_mask = (right_model_indexes >= 0).to(U_i.dtype).unsqueeze(-1)
+                U_i = U_i - irt_model.model_factors(right_safe) * right_mask
                 V_j = torch.softmax(irt_model.item_loading_logits(item_indexes), dim=-1)
                 l2_penalty = U_i.pow(2).mean() + V_j.pow(2).mean()
                 loss = bce_loss + self.irt_l2 * l2_penalty
@@ -189,6 +239,11 @@ class DouglasModel:
             list(range(len(model_examples))),
             batch_size=min(self.batch_size, len(model_examples)),
             shuffle=True,
+        )
+        print(
+            f"Metadata setup: models={len(model_examples)} batches={len(loader)} "
+            f"lr={self.learning_rate} weight_decay={self.weight_decay}",
+            flush=True,
         )
         optimizer = AdamW(model_encoder.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         criterion = nn.L1Loss()
@@ -232,6 +287,7 @@ class DouglasModel:
         U_targets = irt_model.model_factors.weight.detach()
         dataset = TensorDataset(
             indexed["model_indexes"],
+            indexed["right_model_indexes"],
             indexed["item_indexes"],
             indexed["labels"],
         )
@@ -239,6 +295,12 @@ class DouglasModel:
             dataset,
             batch_size=self.batch_size,
             shuffle=True,
+        )
+        print(
+            f"Item-side setup: examples={len(indexed['labels'])} batches={len(loader)} "
+            f"cached_items={len(item_cache)} lr={self.learning_rate} "
+            f"weight_decay={self.weight_decay}",
+            flush=True,
         )
         optimizer = AdamW(
             list(item_encoder.loading_head.parameters()) + list(item_encoder.bias_head.parameters()),
@@ -251,12 +313,23 @@ class DouglasModel:
             item_encoder.train()
             total_loss = 0.0
             total_count = 0
-            for batch_number, (model_indexes, item_indexes, labels) in enumerate(loader, start=1):
+            for batch_number, (
+                model_indexes,
+                right_model_indexes,
+                item_indexes,
+                labels,
+            ) in enumerate(loader, start=1):
                 optimizer.zero_grad()
                 logits = []
-                for model_index, item_index in zip(model_indexes.tolist(), item_indexes.tolist()):
+                for model_index, right_model_index, item_index in zip(
+                    model_indexes.tolist(),
+                    right_model_indexes.tolist(),
+                    item_indexes.tolist(),
+                ):
                     item_key = indexed["item_keys"][item_index]
                     U_i = U_targets[model_index].to(self.device)
+                    if right_model_index >= 0:
+                        U_i = U_i - U_targets[right_model_index].to(self.device)
                     V_j, z_j = item_encoder.forward_from_representations(item_cache[item_key])
                     logits.append(torch.dot(U_i, V_j) + z_j)
 
@@ -290,19 +363,25 @@ class DouglasModel:
         model_examples = []
         item_infos = {}
         model_indexes = []
+        right_model_indexes = []
         item_indexes = []
         labels = []
 
-        for example in examples:
-            model_key = self._model_cache_key(example)
+        def ensure_model(metadata: dict) -> int:
+            model_key = self._metadata_cache_key(metadata)
             if model_key not in model_to_index:
                 model_to_index[model_key] = len(model_examples)
-                model_examples.append(
-                    extract_model_metadata(
-                        example.get("subject_content"),
-                        model_id=example.get("model_id"),
-                    )
-                )
+                model_examples.append(metadata)
+            return model_to_index[model_key]
+
+        for example in examples:
+            pairwise = is_pairwise_input(example)
+            model_index = ensure_model(extract_left_model_metadata(example))
+            right_model_index = (
+                ensure_model(extract_right_model_metadata(example))
+                if pairwise
+                else -1
+            )
 
             item_key = self._item_cache_key(example)
             if item_key not in item_to_index:
@@ -313,7 +392,8 @@ class DouglasModel:
                     "item_content": example.get("item_content") or "",
                 }
 
-            model_indexes.append(model_to_index[model_key])
+            model_indexes.append(model_index)
+            right_model_indexes.append(right_model_index)
             item_indexes.append(item_to_index[item_key])
             labels.append(float(example["label"]))
 
@@ -323,7 +403,8 @@ class DouglasModel:
 
         print(
             f"Indexed training data: models={len(model_to_index)} "
-            f"items={len(item_to_index)} examples={len(labels)}",
+            f"items={len(item_to_index)} examples={len(labels)} "
+            f"pairwise={sum(index >= 0 for index in right_model_indexes)}",
             flush=True,
         )
         return {
@@ -333,6 +414,7 @@ class DouglasModel:
             "item_infos": item_infos,
             "item_keys": item_keys,
             "model_indexes": torch.tensor(model_indexes, dtype=torch.long),
+            "right_model_indexes": torch.tensor(right_model_indexes, dtype=torch.long),
             "item_indexes": torch.tensor(item_indexes, dtype=torch.long),
             "labels": torch.tensor(labels, dtype=torch.float32),
         }
@@ -352,6 +434,7 @@ class DouglasModel:
                 "k": self.k,
                 "p": self.p,
                 "encoder_name": QUESTION_ENCODER_NAME,
+                "item_head_hidden_dim": self.item_head_hidden_dim,
                 "temperature": self.temperature,
             },
         )
@@ -371,8 +454,18 @@ class DouglasModel:
                 key: value.to(self.device)
                 for key, value in item_cache.items()
             }
-            print(f"Loaded {len(item_cache)} cached item representations.", flush=True)
-            return item_cache
+            missing_keys = [key for key in item_infos if key not in item_cache]
+            if not missing_keys:
+                print(
+                    f"Loaded complete item cache: {len(item_cache)} representations.",
+                    flush=True,
+                )
+                return item_cache
+            print(
+                f"Loaded {len(item_cache)} cached item representations, "
+                f"but {len(missing_keys)} required items are missing; recomputing cache.",
+                flush=True,
+            )
 
         print(
             f"Encoding {len(item_infos)} unique items in batches of {self.encode_batch_size}...",
@@ -412,6 +505,9 @@ class DouglasModel:
 
     def _model_cache_key(self, example: dict) -> str:
         return str(example.get("model_id") or example.get("subject_content") or "")
+
+    def _metadata_cache_key(self, metadata: dict) -> str:
+        return str(metadata.get("model_id") or metadata.get("name") or metadata)
 
     def _trainable_parameters(self):
         if self.scorer is None:

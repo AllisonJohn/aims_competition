@@ -382,12 +382,9 @@ def evaluate(
             continue
 
         input_row = {
-            "model_id": example.get("model_id"),
-            "item_id": example.get("item_id"),
-            "benchmark": example.get("benchmark"),
-            "condition": example.get("condition"),
-            "subject_content": example.get("subject_content"),
-            "item_content": example.get("item_content"),
+            key: value
+            for key, value in example.items()
+            if key != "label"
         }
         prediction = _assert_probability(predict_fn(input_row, labeled=[]))
         labels.append(int(label))

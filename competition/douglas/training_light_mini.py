@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import competition.douglas.training as full_training  # noqa: E402
+from competition.douglas.modeling import ITEM_HEAD_HIDDEN_DIM  # noqa: E402
 from competition.douglas.training_light import LIGHT_CONFIGS, LightDouglasModel  # noqa: E402
 from competition.utils.load_train_data import evaluate, load_split_data  # noqa: E402
 
@@ -110,6 +111,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--irt-l2", type=float, default=1e-4)
+    parser.add_argument(
+        "--item-head-hidden-dim",
+        type=int,
+        default=env_int("DOUGLAS_ITEM_HEAD_HIDDEN_DIM", ITEM_HEAD_HIDDEN_DIM),
+    )
     return parser.parse_args()
 
 
@@ -143,6 +149,13 @@ def main() -> None:
     print(f"Light mini variant: {args.item_encoder}", flush=True)
     print(f"Using item encoder: {config['encoder_name']}", flush=True)
     print(f"Item encoder class: {full_training.ItemQuestionEncoder.__name__}", flush=True)
+    print(
+        f"Training args: learning_rate={args.learning_rate} "
+        f"weight_decay={args.weight_decay} irt_l2={args.irt_l2} "
+        f"temperature={args.temperature} "
+        f"item_head_hidden_dim={args.item_head_hidden_dim}",
+        flush=True,
+    )
     print(f"Train benchmarks: {train_data['benchmark_ids']}", flush=True)
     print(f"Test benchmarks: {test_data['benchmark_ids']}", flush=True)
     print(
@@ -162,6 +175,7 @@ def main() -> None:
         epochs=args.epochs,
         batch_size=args.batch_size,
         encode_batch_size=encode_batch_size,
+        item_head_hidden_dim=args.item_head_hidden_dim,
         temperature=args.temperature,
         irt_l2=args.irt_l2,
     )

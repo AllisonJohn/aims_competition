@@ -1,6 +1,8 @@
 #!/bin/bash
 # Submit from the Schmidt cluster after copying/cloning this repo there:
 #   sbatch competition/douglas/schmidt_train_light_minilm.sh
+# Forward training flags after the script name, for example:
+#   sbatch competition/douglas/schmidt_train_light_minilm.sh --learning-rate 3e-4 --irt-l2 1e-5 --temperature 0.7 --weight-decay 1e-5 --item-head-hidden-dim 64
 
 #SBATCH --job-name=douglas-light-minilm
 #SBATCH --output=%x-%j.out
@@ -36,4 +38,4 @@ fi
 export HF_HOME="${HF_HOME:-$REPO_ROOT/.hf_cache}"
 mkdir -p "$HF_HOME"
 
-"$RUN_PYTHON" competition/douglas/training_light.py --item-encoder minilm
+"$RUN_PYTHON" competition/douglas/training_light.py --item-encoder minilm "$@"
