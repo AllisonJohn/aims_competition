@@ -1,0 +1,8 @@
+torch
+transformers
+sentencepiece
+numpy
+pandas
+pyarrow
+scikit-learn
+huggingface_hub

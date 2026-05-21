@@ -1,0 +1,20 @@
+{
+  "benchmarks": 16,
+  "bucket_names": [
+    "math",
+    "code",
+    "visual",
+    "agent_tool",
+    "preference",
+    "science_medical",
+    "security",
+    "general_reasoning"
+  ],
+  "conditions": 215,
+  "feature_dim": 16,
+  "global_rate": 0.6732577570061732,
+  "regularization_c": 1.0,
+  "subjects": 909,
+  "train_accuracy": 0.7408761812958942,
+  "train_rows": 5361379
+}

@@ -4,6 +4,7 @@ Run once per encoder to produce artifacts that ``model.py`` can ensemble:
 
     python competition/douglas/train_submit.py --item-encoder features
     python competition/douglas/train_submit.py --item-encoder lm
+    python competition/douglas/train_submit.py --item-encoder bge-large
 """
 
 from __future__ import annotations
@@ -37,6 +38,13 @@ SUBMIT_CONFIGS = {
         "item_cache_path": Path(__file__).with_name("artifacts") / "item_representations_submit_lm_context_v1.pt",
         "item_encoder_cls": None,
         "encode_batch_size": 256,
+    },
+    "bge-large": {
+        "encoder_name": "BAAI/bge-large-en-v1.5",
+        "artifact_path": Path(__file__).with_name("artifacts") / "douglas_submit_bge_large.pt",
+        "item_cache_path": Path(__file__).with_name("artifacts") / "item_representations_submit_bge_large_context_v1.pt",
+        "item_encoder_cls": None,
+        "encode_batch_size": 96,
     },
 }
 

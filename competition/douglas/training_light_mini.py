@@ -60,6 +60,8 @@ def take_binary_item_subset(
     max_unique_items: int,
     max_rows: int,
 ) -> list[dict]:
+    limit_items = max_unique_items > 0
+    limit_rows = max_rows > 0
     selected_items: set[str] = set()
     kept: list[dict] = []
     seen = 0
@@ -75,13 +77,13 @@ def take_binary_item_subset(
 
         key = item_subset_key(example)
         if key not in selected_items:
-            if len(selected_items) >= max_unique_items:
+            if limit_items and len(selected_items) >= max_unique_items:
                 skipped_new_items += 1
                 continue
             selected_items.add(key)
 
         kept.append(example)
-        if len(kept) >= max_rows:
+        if limit_rows and len(kept) >= max_rows:
             break
 
     print(

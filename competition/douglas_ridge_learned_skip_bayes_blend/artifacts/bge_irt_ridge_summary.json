@@ -1,0 +1,16 @@
+{
+  "blend_weight": 0.45,
+  "calibrator_features": 9,
+  "encoder": "BAAI/bge-large-en-v1.5",
+  "prior_weights": {
+    "benchmark": 0.1,
+    "condition": 0.22,
+    "item_adjustment": 1.0,
+    "subject": 0.68
+  },
+  "rasch_items": 88886,
+  "rasch_subjects": 909,
+  "ridge_alpha": 300.0,
+  "text_item_targets": 88886,
+  "train_rows": 1086835
+}

@@ -1,0 +1,269 @@
+{
+  "auc_roc": 0.6140312608103188,
+  "blend_weight": 0.2,
+  "default_auc_roc": 0.5998558931173597,
+  "default_blend_weight": 0.45,
+  "default_negative_log_loss": -0.6203850865372931,
+  "default_prior_weights": {
+    "benchmark": 0.1,
+    "condition": 0.22,
+    "item_adjustment": 1.0,
+    "subject": 0.68
+  },
+  "encoder": "BAAI/bge-large-en-v1.5",
+  "item_targets": 35504,
+  "negative_log_loss": -0.609201505905024,
+  "prior_weights": {
+    "benchmark": 0.0,
+    "condition": 0.0,
+    "item_adjustment": 0.0,
+    "subject": 1.0
+  },
+  "ridge_alpha": 300.0,
+  "split": "whole-benchmark 80:20",
+  "sweep_count": 162,
+  "top_sweep": [
+    {
+      "auc_roc": 0.6140312608103188,
+      "blend_weight": 0.2,
+      "negative_log_loss": -0.609201505905024,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.0,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6189743265483914,
+      "blend_weight": 0.1,
+      "negative_log_loss": -0.6094192961669811,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.0,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6106476570085263,
+      "blend_weight": 0.3,
+      "negative_log_loss": -0.6094591784146436,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.0,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.611656093371838,
+      "blend_weight": 0.2,
+      "negative_log_loss": -0.6099200012623346,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.5,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6144126473317244,
+      "blend_weight": 0.1,
+      "negative_log_loss": -0.6100223698409872,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.5,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6030141758671235,
+      "blend_weight": 0.0,
+      "negative_log_loss": -0.6101117998640236,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.0,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6091011637116371,
+      "blend_weight": 0.3,
+      "negative_log_loss": -0.6102927557987088,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.5,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6052441249536086,
+      "blend_weight": 0.0,
+      "negative_log_loss": -0.6106004200898321,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.5,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6085747773305782,
+      "blend_weight": 0.1,
+      "negative_log_loss": -0.6107073314145453,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 1.0,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6082455101621113,
+      "blend_weight": 0.2,
+      "negative_log_loss": -0.6107204439252115,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 1.0,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6065195796858173,
+      "blend_weight": 0.45,
+      "negative_log_loss": -0.6107243513153202,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.0,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.602720905268968,
+      "blend_weight": 0.0,
+      "negative_log_loss": -0.6111705287611928,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 1.0,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6068470920516414,
+      "blend_weight": 0.3,
+      "negative_log_loss": -0.6112080063714478,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 1.0,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6144141003148881,
+      "blend_weight": 0.2,
+      "negative_log_loss": -0.6114050653520333,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.1,
+        "item_adjustment": 0.0,
+        "subject": 0.9
+      }
+    },
+    {
+      "auc_roc": 0.6206325680724041,
+      "blend_weight": 0.1,
+      "negative_log_loss": -0.6116150758365168,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.1,
+        "item_adjustment": 0.0,
+        "subject": 0.9
+      }
+    },
+    {
+      "auc_roc": 0.6105659724952236,
+      "blend_weight": 0.3,
+      "negative_log_loss": -0.6116716454338699,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.1,
+        "item_adjustment": 0.0,
+        "subject": 0.9
+      }
+    },
+    {
+      "auc_roc": 0.6054929250793636,
+      "blend_weight": 0.45,
+      "negative_log_loss": -0.6117272865209995,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.0,
+        "item_adjustment": 0.5,
+        "subject": 1.0
+      }
+    },
+    {
+      "auc_roc": 0.6115999412232677,
+      "blend_weight": 0.2,
+      "negative_log_loss": -0.6121350872485937,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.1,
+        "item_adjustment": 0.5,
+        "subject": 0.9
+      }
+    },
+    {
+      "auc_roc": 0.614674591152215,
+      "blend_weight": 0.1,
+      "negative_log_loss": -0.6122293832731046,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.1,
+        "item_adjustment": 0.5,
+        "subject": 0.9
+      }
+    },
+    {
+      "auc_roc": 0.6200597364172775,
+      "blend_weight": 0.0,
+      "negative_log_loss": -0.6123012327603443,
+      "prior_weights": {
+        "benchmark": 0.0,
+        "condition": 0.1,
+        "item_adjustment": 0.0,
+        "subject": 0.9
+      }
+    }
+  ],
+  "train_benchmarks": [
+    "afrimedqa",
+    "agentdojo",
+    "ai2d_test",
+    "androidworld",
+    "bfcl",
+    "cybench",
+    "hle",
+    "livecodebench",
+    "matharena",
+    "mathvista_mini",
+    "mmbench_v11",
+    "mmlupro",
+    "mtbench"
+  ],
+  "train_rows": 979319,
+  "validation_benchmarks": [
+    "rewardbench",
+    "swebench",
+    "ultrafeedback"
+  ],
+  "validation_rows": 1527465
+}

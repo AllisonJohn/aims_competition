@@ -1,8 +1,25 @@
-"""Self-contained Douglas submission model.
+"""Douglas BGE neural submit model.
 
-This file intentionally includes the lightweight prediction code needed to
-load ``artifacts/douglas_submit_features.pt``. Do not rely on ``modeling.py``
-being present in the submitted ZIP.
+This file is self-contained for submission. It loads the standard BGE-large
+checkpoint trained by:
+
+    modal run competition/douglas/modal_train_submit.py \
+      --item-encoder bge-large \
+      --epochs 3 \
+      --batch-size 512 \
+      --learning-rate 3e-4 \
+      --irt-l2 1e-3 \
+      --temperature 1 \
+      --weight-decay 1e-4 \
+      --item-head-hidden-dim 64 \
+      --limit 0 \
+      --artifact-suffix _3epoch
+
+Expected submitted files:
+- model.py
+- models.txt
+- requirements.txt
+- artifacts/douglas_submit_bge_large_3epoch.pt
 """
 
 from __future__ import annotations
@@ -17,19 +34,19 @@ from torch import nn
 
 
 LOCAL_SMOKE_TEST_ENV = "PREDICTIVE_EVAL_LOCAL_SMOKE_TEST"
-ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_model.pt"
-SUBMIT_ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_submit_features.pt"
-PREDICTION_TEMPERATURE = 1.5
+SUBMIT_ARTIFACT_PATH = Path(__file__).with_name("artifacts") / "douglas_submit_bge_large_3epoch.pt"
 
 MISSING_TOKEN = "__missing__"
-UNKNOWN_MODEL_TOKEN = "__unknown_model__"
 MODEL_EMBED_DIM = 8
 METADATA_FIELDS = ("model_id", "name", "organization", "size_params", "release_date", "family")
 NUMERIC_MODEL_FEATURES = ("log_params", "release_date", "frontier_developer")
 MODEL_FEATURE_DIM = len(METADATA_FIELDS) + len(NUMERIC_MODEL_FEATURES)
 MODEL_VECTOR_DIM = 4
-ITEM_FEATURE_DIM = 73
-ITEM_HEAD_HIDDEN_DIM = 128
+QUESTION_ENCODER_NAME = "BAAI/bge-large-en-v1.5"
+BGE_QUERY_PREFIX = "Represent this evaluation question for difficulty prediction: "
+MAX_QUESTION_TOKENS = 256
+SENTENCE_COMPLEXITY_FEATURE_DIM = 16
+ITEM_HEAD_HIDDEN_DIM = 64
 ITEM_HEAD_RESIDUAL = True
 CLIP_LO = 1e-7
 CLIP_HI = 1.0 - 1e-7
@@ -53,6 +70,25 @@ RIGHT_SUBJECT_CONTENT_KEYS = (
 def _local_smoke_test_enabled() -> bool:
     value = os.environ.get(LOCAL_SMOKE_TEST_ENV, "")
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_cache_dir() -> str | None:
+    candidates = [
+        os.environ.get("HF_HOME", "").strip(),
+        "/app/hf_cache",
+        str(Path(__file__).with_name(".hf_cache")),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        if os.access(path, os.W_OK):
+            return str(path)
+    return None
 
 
 def first_present(mapping: dict, keys: tuple[str, ...]):
@@ -81,7 +117,7 @@ def extract_model_metadata(subject_content: str | None, model_id: str | None = N
     }
     if not subject_content:
         return metadata
-    for line in subject_content.splitlines():
+    for line in str(subject_content).splitlines():
         if ":" not in line:
             continue
         label, value = line.split(":", 1)
@@ -125,12 +161,9 @@ class ModelSideEncoder(nn.Module):
         field_value_means: dict[str, dict[str, float]] | None = None,
         field_default_means: dict[str, float] | None = None,
         global_mean: float = 0.5,
-        p: int = MODEL_EMBED_DIM,
         output_dim: int = MODEL_VECTOR_DIM,
     ) -> None:
         super().__init__()
-        self.p = p
-        self.output_dim = output_dim
         self.global_mean = float(global_mean)
         self.field_value_means = {
             field: dict((field_value_means or {}).get(field, {}))
@@ -140,11 +173,6 @@ class ModelSideEncoder(nn.Module):
             field: float((field_default_means or {}).get(field, self.global_mean))
             for field in METADATA_FIELDS
         }
-        self.model_to_index = {UNKNOWN_MODEL_TOKEN: 0}
-        self.organization_to_index = {MISSING_TOKEN: 0}
-        self.family_to_index = {MISSING_TOKEN: 0}
-        self.name_token_to_index = {MISSING_TOKEN: 0}
-        self.num_models = len(self.field_value_means["model_id"])
         self.output_projection = nn.Linear(MODEL_FEATURE_DIM, output_dim)
         self.register_buffer("_device_anchor", torch.empty(0), persistent=False)
 
@@ -162,27 +190,68 @@ class ModelSideEncoder(nn.Module):
         return self.field_value_means[field].get(key, self.field_default_means[field])
 
 
-class HandcraftedItemQuestionEncoder(nn.Module):
-    item_encoder_type = "handcrafted"
-
+class DirectModelLookupEncoder(nn.Module):
     def __init__(
         self,
-        encoder_name: str = "handcrafted-item-features",
+        model_vectors: torch.Tensor,
+        model_id_to_index: dict[str, int] | None = None,
+        name_to_index: dict[str, int] | None = None,
+        fallback_vector: torch.Tensor | None = None,
+    ) -> None:
+        super().__init__()
+        vectors = model_vectors.detach().clone().float()
+        self.register_buffer("model_vectors", vectors)
+        if fallback_vector is None:
+            fallback_vector = vectors.mean(dim=0) if len(vectors) else torch.zeros(vectors.shape[1])
+        self.register_buffer("fallback_vector", fallback_vector.detach().clone().float())
+        self.model_id_to_index = dict(model_id_to_index or {})
+        self.name_to_index = dict(name_to_index or {})
+
+    def forward(self, metadata: dict) -> torch.Tensor:
+        for value, mapping in (
+            (metadata.get("model_id"), self.model_id_to_index),
+            (metadata.get("name"), self.name_to_index),
+        ):
+            key = normalize_metadata_value(value)
+            if key in mapping:
+                return self.model_vectors[mapping[key]]
+        return self.fallback_vector
+
+
+class ItemQuestionEncoder(nn.Module):
+    def __init__(
+        self,
+        encoder_name: str = QUESTION_ENCODER_NAME,
         loading_dim: int = MODEL_VECTOR_DIM,
-        max_length: int = 256,
+        max_length: int = MAX_QUESTION_TOKENS,
         hidden_dim: int = ITEM_HEAD_HIDDEN_DIM,
         item_head_residual: bool = ITEM_HEAD_RESIDUAL,
-        freeze_backbone: bool = True,
-        local_files_only: bool = False,
+        local_files_only: bool = True,
         cache_dir: str | None = None,
     ) -> None:
         super().__init__()
+        from transformers import AutoModel, AutoTokenizer
+
         self.encoder_name = encoder_name
         self.loading_dim = loading_dim
         self.max_length = max_length
         self.hidden_dim = hidden_dim
         self.item_head_residual = item_head_residual
-        self.representation_dim = ITEM_FEATURE_DIM
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            encoder_name,
+            cache_dir=cache_dir,
+            local_files_only=local_files_only,
+        )
+        self.backbone = AutoModel.from_pretrained(
+            encoder_name,
+            cache_dir=cache_dir,
+            local_files_only=local_files_only,
+        )
+        for parameter in self.backbone.parameters():
+            parameter.requires_grad = False
+
+        backbone_dim = self.backbone.config.hidden_size
+        self.representation_dim = backbone_dim + SENTENCE_COMPLEXITY_FEATURE_DIM
         self.loading_head = build_item_head(
             self.representation_dim,
             loading_dim,
@@ -197,7 +266,24 @@ class HandcraftedItemQuestionEncoder(nn.Module):
         )
 
     def encode_sentence_representations(self, item_side_info: dict) -> torch.Tensor:
-        return item_hardness_features(item_side_info).to(self.head_device()).unsqueeze(0)
+        sentences = split_sentences(render_item_encoder_text(item_side_info))
+        return self.encode_sentences(sentences)
+
+    def encode_sentences(self, sentences: list[str]) -> torch.Tensor:
+        encoded = self.tokenizer(
+            [f"{BGE_QUERY_PREFIX}{sentence}" for sentence in sentences],
+            padding=True,
+            truncation=True,
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        device = next(self.backbone.parameters()).device
+        encoded = {key: value.to(device) for key, value in encoded.items()}
+        output = self.backbone(**encoded)
+        pooled = self.mean_pool(output.last_hidden_state, encoded["attention_mask"])
+        pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
+        complexity = sentence_complexity_features(sentences).to(pooled.device)
+        return torch.cat([pooled, complexity], dim=-1)
 
     def forward_from_representations(
         self,
@@ -207,23 +293,25 @@ class HandcraftedItemQuestionEncoder(nn.Module):
         bias = self.bias_head(sentence_representations).squeeze(-1)
         return loading.mean(dim=0), bias.mean()
 
-    def head_device(self) -> torch.device:
-        return next(self.loading_head.parameters()).device
+    @staticmethod
+    def mean_pool(token_embeddings: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        mask = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        summed = torch.sum(token_embeddings * mask, dim=1)
+        counts = torch.clamp(mask.sum(dim=1), min=1e-9)
+        return summed / counts
 
 
 class DouglasScorer(nn.Module):
     def __init__(
         self,
-        model_encoder: ModelSideEncoder,
-        item_encoder: HandcraftedItemQuestionEncoder,
+        model_encoder: nn.Module,
+        item_encoder: ItemQuestionEncoder,
         temperature: float = 1.0,
     ) -> None:
         super().__init__()
-        if temperature <= 0:
-            raise ValueError("temperature must be positive.")
         self.model_encoder = model_encoder
         self.item_encoder = item_encoder
-        self.temperature = temperature
+        self.temperature = float(temperature)
         self.item_representation_cache: dict[str, torch.Tensor] = {}
 
     def score_logit(self, input: dict) -> torch.Tensor:
@@ -236,7 +324,7 @@ class DouglasScorer(nn.Module):
         return torch.dot(U_left, V_j) + z_j
 
     def forward(self, input: dict) -> torch.Tensor:
-        return self.score_logit(input) / self.temperature
+        return self.score_logit(input) / max(self.temperature, 1e-8)
 
     def predict_probability(self, input: dict) -> float:
         self.eval()
@@ -255,44 +343,6 @@ class DouglasScorer(nn.Module):
                     self.item_encoder.encode_sentence_representations(input).detach()
                 )
         return self.item_representation_cache[key]
-
-
-def load_checkpoint(path: Path, map_location: str = "cpu") -> DouglasScorer:
-    data = torch.load(path, map_location=map_location, weights_only=False)
-    config = data.get("config", {})
-    item_encoder_type = config.get("item_encoder_type", "handcrafted")
-    if item_encoder_type != "handcrafted":
-        raise ValueError("This self-contained model.py only supports the handcrafted features artifact.")
-
-    k = int(config.get("k", MODEL_VECTOR_DIM))
-    p = int(config.get("p", MODEL_EMBED_DIM))
-    item_head_hidden_dim = int(config.get("item_head_hidden_dim", ITEM_HEAD_HIDDEN_DIM))
-    item_head_residual = bool(config.get("item_head_residual", False))
-
-    model_encoder = ModelSideEncoder(
-        field_value_means=data.get("field_value_means"),
-        field_default_means=data.get("field_default_means"),
-        global_mean=float(data.get("global_mean", 0.5)),
-        p=p,
-        output_dim=k,
-    )
-    model_encoder.load_state_dict(data["model_encoder_state_dict"])
-
-    item_encoder = HandcraftedItemQuestionEncoder(
-        loading_dim=k,
-        hidden_dim=item_head_hidden_dim,
-        item_head_residual=item_head_residual,
-    )
-    item_encoder.loading_head.load_state_dict(data["item_heads_state_dict"]["loading_head"])
-    item_encoder.bias_head.load_state_dict(data["item_heads_state_dict"]["bias_head"])
-
-    scorer = DouglasScorer(
-        model_encoder=model_encoder,
-        item_encoder=item_encoder,
-        temperature=float(data.get("temperature", config.get("temperature", 1.0))),
-    )
-    scorer.eval()
-    return scorer
 
 
 class ResidualItemHead(nn.Module):
@@ -319,8 +369,8 @@ class ResidualItemHead(nn.Module):
 def build_item_head(
     input_dim: int,
     output_dim: int,
-    hidden_dim: int = ITEM_HEAD_HIDDEN_DIM,
-    residual: bool = ITEM_HEAD_RESIDUAL,
+    hidden_dim: int,
+    residual: bool,
 ) -> nn.Module:
     if residual:
         return ResidualItemHead(input_dim, output_dim, hidden_dim)
@@ -331,140 +381,108 @@ def build_item_head(
     )
 
 
-def item_hardness_features(item_side_info: dict) -> torch.Tensor:
-    text = item_side_info.get("item_content") or ""
-    lower = text.lower()
-    sentences = split_sentences(text)
-    words = re.findall(r"[A-Za-z0-9_]+", text)
-    unique_words = {word.lower() for word in words}
+def load_checkpoint(path: Path) -> DouglasScorer:
+    data = torch.load(path, map_location="cpu", weights_only=False)
+    config = data.get("config", {})
+    k = int(config.get("k", MODEL_VECTOR_DIM))
+    encoder_name = config.get("encoder_name", QUESTION_ENCODER_NAME)
+    max_length = int(config.get("max_length", MAX_QUESTION_TOKENS))
+    item_head_hidden_dim = int(config.get("item_head_hidden_dim", ITEM_HEAD_HIDDEN_DIM))
+    item_head_residual = bool(config.get("item_head_residual", ITEM_HEAD_RESIDUAL))
 
-    char_count = len(text)
-    word_count = len(words)
-    sentence_count = len(sentences)
-    avg_word_len = sum(len(word) for word in words) / word_count if word_count else 0.0
-    avg_sentence_words = word_count / max(sentence_count, 1)
-    unique_ratio = len(unique_words) / max(word_count, 1)
-
-    digit_count = sum(char.isdigit() for char in text)
-    punctuation_count = sum(char in ".,;:!?()[]{}" for char in text)
-    uppercase_count = sum(char.isupper() for char in text)
-    math_symbols = "\u222b\u2211\u2202\u221a\u2264\u2265\u2260\u2248\u221e\u03c0\u03b8\u03bb\u03bc+-*/=<>^"
-    math_symbol_count = sum(char in math_symbols for char in text)
-    newline_count = text.count("\n")
-    choice_count = count_choice_markers(text)
-    code_marker_count = count_code_markers(text)
-    latex_marker_count = count_latex_markers(text)
-    comparison_count = len(re.findall(r"[A-Za-z0-9]\s*(=|<|>|\u2264|\u2265|\u2248|\u2260)\s*[A-Za-z0-9]", text))
-    constraint_count = len(
-        re.findall(
-            r"\b(if|unless|except|exactly|at least|at most|minimum|maximum|must|cannot|not)\b",
-            lower,
+    model_encoder_type = config.get("model_encoder_type", "metadata_projection")
+    if model_encoder_type == "direct_lookup":
+        state = data["model_encoder_state_dict"]
+        model_encoder = DirectModelLookupEncoder(
+            model_vectors=state["model_vectors"],
+            model_id_to_index=data.get("model_id_to_index", {}),
+            name_to_index=data.get("name_to_index", {}),
+            fallback_vector=state.get("fallback_vector"),
         )
-    )
+    else:
+        model_encoder = ModelSideEncoder(
+            field_value_means=data.get("field_value_means"),
+            field_default_means=data.get("field_default_means"),
+            global_mean=float(data.get("global_mean", 0.5)),
+            output_dim=k,
+        )
+    model_encoder.load_state_dict(data["model_encoder_state_dict"])
 
-    features = [
-        clamp01(math.log1p(char_count) / 10.0),
-        clamp01(math.log1p(word_count) / 8.0),
-        clamp01(math.log1p(sentence_count) / 5.0),
-        clamp01(avg_word_len / 20.0),
-        clamp01(avg_sentence_words / 80.0),
-        clamp01(unique_ratio),
-        safe_density(digit_count, char_count),
-        safe_density(punctuation_count, char_count),
-        safe_density(uppercase_count, char_count),
-        safe_density(math_symbol_count, char_count),
-        safe_density(newline_count, max(char_count / 80.0, 1.0)),
-        clamp01(choice_count / 10.0),
-        clamp01(code_marker_count / 20.0),
-        clamp01(latex_marker_count / 20.0),
-        clamp01(comparison_count / 20.0),
-        clamp01(constraint_count / 20.0),
-    ]
-    features.extend(one_hot_bin(char_count, [128, 512, 2048, 8192]))
-    features.extend(one_hot_bin(word_count, [25, 100, 400, 1000]))
-    features.extend(one_hot_bin(sentence_count, [1, 3, 8, 20]))
-    features.extend(one_hot_bin(newline_count, [0, 2, 8, 25]))
-    features.extend(one_hot_bin(choice_count, [0, 2, 4, 6]))
-    features.extend(one_hot_bin(math_symbol_count, [0, 2, 8, 25]))
-    features.extend(one_hot_bin(code_marker_count, [0, 1, 4, 12]))
-    features.extend(one_hot_bin(latex_marker_count, [0, 1, 4, 12]))
-    features.extend(one_hot_bin(safe_density(punctuation_count, char_count), [0.02, 0.06, 0.12, 0.20]))
-    features.extend(
-        [
-            float("?" in text),
-            float(math_symbol_count > 0),
-            float(latex_marker_count > 0),
-            float(comparison_count > 0),
-            float(code_marker_count > 0),
-            float(choice_count > 0),
-            float(has_table_shape(text)),
-            float(any(marker in lower for marker in ("image", "figure", "<img", ".png", ".jpg"))),
-            float(any(word in lower for word in ("prove", "derive", "proof", "theorem"))),
-            float(any(word in lower for word in ("explain", "justify", "reason", "infer"))),
-            float(any(word in lower for word in ("not", "except", "false", "incorrect"))),
-            float(constraint_count >= 2),
-        ]
+    item_encoder = ItemQuestionEncoder(
+        encoder_name=encoder_name,
+        loading_dim=k,
+        max_length=max_length,
+        hidden_dim=item_head_hidden_dim,
+        item_head_residual=item_head_residual,
+        local_files_only=True,
+        cache_dir=_resolve_cache_dir(),
     )
-    return torch.tensor(features, dtype=torch.float32)
+    item_encoder.loading_head.load_state_dict(data["item_heads_state_dict"]["loading_head"])
+    item_encoder.bias_head.load_state_dict(data["item_heads_state_dict"]["bias_head"])
+
+    scorer = DouglasScorer(
+        model_encoder=model_encoder,
+        item_encoder=item_encoder,
+        temperature=float(data.get("temperature", config.get("temperature", 1.0))),
+    )
+    scorer.eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return scorer.to(device)
 
 
 def split_sentences(text: str) -> list[str]:
     sentences = [
         sentence.strip()
-        for sentence in re.split(r"(?<=[.!?])\s+", text)
+        for sentence in re.split(r"(?<=[.!?])\s+", str(text))
         if sentence.strip()
     ]
     return sentences or [""]
 
 
-def one_hot_bin(value: float, thresholds: list[float]) -> list[float]:
-    index = 0
-    while index < len(thresholds) and value > thresholds[index]:
-        index += 1
-    return [float(position == index) for position in range(len(thresholds) + 1)]
+def render_item_encoder_text(item_side_info: dict) -> str:
+    benchmark = item_side_info.get("benchmark") or "unknown"
+    condition = item_side_info.get("condition") or "none"
+    item_content = item_side_info.get("item_content") or ""
+    return f"benchmark: {benchmark}\ncondition: {condition}\nitem: {item_content}"
 
 
-def safe_density(count: float, total: float) -> float:
-    return clamp01(count / max(total, 1.0))
+def sentence_complexity_features(sentences: list[str]) -> torch.Tensor:
+    return torch.tensor(
+        [sentence_complexity_feature(sentence) for sentence in sentences],
+        dtype=torch.float32,
+    )
 
 
-def clamp01(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
+def sentence_complexity_feature(sentence: str) -> list[float]:
+    words = re.findall(r"[A-Za-z0-9_]+", sentence)
+    word_count = len(words)
+    char_count = len(sentence)
+    avg_word_len = sum(len(word) for word in words) / word_count if word_count else 0.0
+    digit_count = sum(char.isdigit() for char in sentence)
+    punctuation_count = sum(char in ".,;:!?()[]{}" for char in sentence)
+    uppercase_count = sum(char.isupper() for char in sentence)
+    math_symbols = "∫∑∂√≤≥≠≈∞πθλμ+-*/=<>^"
+    math_symbol_count = sum(char in math_symbols for char in sentence)
+    lower = sentence.lower()
 
-
-def count_choice_markers(text: str) -> int:
-    return len(re.findall(r"(?im)(?:^|\s)(?:\(?[A-H]\)|[A-H][\).:])\s+", text))
-
-
-def count_code_markers(text: str) -> int:
-    lower = text.lower()
-    markers = [
-        "```",
-        "def ",
-        "class ",
-        "import ",
-        "return ",
-        "for ",
-        "while ",
-        "function",
-        "traceback",
-        "error:",
-        "{",
-        "}",
-        "=>",
-        "::",
+    return [
+        math.log1p(char_count) / 8.0,
+        math.log1p(word_count) / 6.0,
+        min(avg_word_len, 20.0) / 20.0,
+        digit_count / max(char_count, 1),
+        punctuation_count / max(char_count, 1),
+        uppercase_count / max(char_count, 1),
+        math_symbol_count / max(char_count, 1),
+        float("?" in sentence),
+        float(math_symbol_count > 0),
+        float(bool(re.search(r"\$.*?\$|\\[a-zA-Z]+|\\\(|\\\[", sentence))),
+        float(bool(re.search(r"[A-Za-z0-9]\s*(=|<|>|≤|≥|≈|≠)\s*[A-Za-z0-9]", sentence))),
+        float(bool(re.search(r"\b\d+(?:\.\d+)?\b", sentence))),
+        float(any(marker in lower for marker in ("def ", "class ", "function", "return ", "import ", "```"))),
+        float(any(marker in lower for marker in (" a)", " b)", " c)", " d)", "(a)", "(b)", "(c)", "(d)"))),
+        float(any(word in lower for word in ("prove", "derive", "explain", "justify", "reason", "infer"))),
+        float(any(word in lower for word in ("not", "except", "least", "false", "incorrect"))),
     ]
-    return sum(lower.count(marker) for marker in markers)
-
-
-def count_latex_markers(text: str) -> int:
-    return len(re.findall(r"\$|\\\(|\\\[|\\frac|\\sum|\\int|\\sqrt|\\log|\\mathbb|\\begin", text))
-
-
-def has_table_shape(text: str) -> bool:
-    lines = [line for line in text.splitlines() if line.strip()]
-    table_like_lines = sum("|" in line or "\t" in line for line in lines)
-    return table_like_lines >= 2
 
 
 def numeric_model_features(metadata: dict) -> list[float]:
@@ -475,23 +493,6 @@ def numeric_model_features(metadata: dict) -> list[float]:
         normalized_release_date(metadata.get("release_date")),
         frontier_developer_feature(metadata),
     ]
-
-
-def normalized_release_date(release_date: str | None) -> float:
-    year, month = parse_release_year_month(release_date)
-    if year is None:
-        return 0.0
-    decimal_year = year + (month - 1.0) / 12.0
-    return clamp01((decimal_year - 2020.0) / 8.0)
-
-
-def frontier_developer_feature(metadata: dict) -> float:
-    text = " ".join(
-        str(metadata.get(field) or "")
-        for field in ("organization", "name", "model_id", "family")
-    ).lower()
-    markers = ("anthropic", "claude", "openai", "gpt", "google", "deepmind", "gemini")
-    return float(any(marker in text for marker in markers))
 
 
 def parse_params_billions(size_params: str | None, name: str | None) -> float | None:
@@ -512,6 +513,14 @@ def parse_params_billions(size_params: str | None, name: str | None) -> float | 
     return max(values) if values else None
 
 
+def normalized_release_date(release_date: str | None) -> float:
+    year, month = parse_release_year_month(release_date)
+    if year is None:
+        return 0.0
+    decimal_year = year + (month - 1.0) / 12.0
+    return clamp01((decimal_year - 2020.0) / 8.0)
+
+
 def parse_release_year_month(release_date: str | None) -> tuple[float | None, float]:
     if not release_date:
         return None, 0.0
@@ -523,6 +532,15 @@ def parse_release_year_month(release_date: str | None) -> tuple[float | None, fl
     return year, max(1.0, min(12.0, month))
 
 
+def frontier_developer_feature(metadata: dict) -> float:
+    text = " ".join(
+        str(metadata.get(field) or "")
+        for field in ("organization", "name", "model_id", "family")
+    ).lower()
+    markers = ("anthropic", "claude", "openai", "gpt", "google", "deepmind", "gemini")
+    return float(any(marker in text for marker in markers))
+
+
 def normalize_metadata_value(value) -> str:
     if value is None:
         return MISSING_TOKEN
@@ -530,33 +548,30 @@ def normalize_metadata_value(value) -> str:
     return text or MISSING_TOKEN
 
 
+def clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
 def clip_probability(probability: float) -> float:
-    return max(CLIP_LO, min(CLIP_HI, probability))
+    return max(CLIP_LO, min(CLIP_HI, float(probability)))
 
 
 SCORER = None
 LOAD_ERROR = None
-LOAD_ERRORS = []
 
 try:
-    for artifact_path in (SUBMIT_ARTIFACT_PATH, ARTIFACT_PATH):
-        if SCORER is not None:
-            break
-        try:
-            if not artifact_path.exists():
-                raise FileNotFoundError(f"Missing model artifact: {artifact_path}")
-            SCORER = load_checkpoint(artifact_path)
-            SCORER.temperature = PREDICTION_TEMPERATURE
-        except Exception as exc:
-            LOAD_ERRORS.append((artifact_path, exc))
-    if SCORER is None:
-        if LOAD_ERRORS:
-            raise LOAD_ERRORS[0][1]
-        raise FileNotFoundError("No Douglas model artifacts found.")
+    if _local_smoke_test_enabled():
+        SCORER = None
+    else:
+        if not SUBMIT_ARTIFACT_PATH.exists():
+            raise FileNotFoundError(f"Missing model artifact: {SUBMIT_ARTIFACT_PATH}")
+        SCORER = load_checkpoint(SUBMIT_ARTIFACT_PATH)
 except Exception as exc:
     LOAD_ERROR = exc
-    if not _local_smoke_test_enabled():
+    if _local_smoke_test_enabled():
         print(f"[douglas/model.py] WARNING: using fallback predictor ({exc!r})", flush=True)
+    else:
+        raise
 
 
 def predict(input: dict, labeled: list[dict] | None = None) -> float:

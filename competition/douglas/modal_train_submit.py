@@ -7,6 +7,7 @@ Local setup:
 Train both submit artifacts separately:
     modal run competition/douglas/modal_train_submit.py --item-encoder features
     modal run competition/douglas/modal_train_submit.py --item-encoder lm
+    modal run competition/douglas/modal_train_submit.py --item-encoder bge-large
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ def train_submit_remote(
     irt_l2: float,
     item_head_hidden_dim: int,
     limit: int,
+    artifact_suffix: str,
 ) -> dict:
     import os
     import sys
@@ -77,7 +79,10 @@ def train_submit_remote(
     from competition.utils.load_train_data import get_training_data
 
     config = SUBMIT_CONFIGS[item_encoder]
-    remote_artifact_path = Path(f"/tmp/{config['artifact_path'].name}")
+    artifact_name = config["artifact_path"].with_stem(
+        f"{config['artifact_path'].stem}{artifact_suffix}"
+    ).name
+    remote_artifact_path = Path(f"/tmp/{artifact_name}")
     remote_item_cache_path = Path(f"/cache/douglas/{config['item_cache_path'].name}")
     remote_item_cache_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -126,7 +131,7 @@ def train_submit_remote(
 
     return {
         "artifact_bytes": remote_artifact_path.read_bytes(),
-        "artifact_name": config["artifact_path"].name,
+        "artifact_name": artifact_name,
         "train_benchmarks": train_data["benchmark_ids"],
     }
 
@@ -142,9 +147,10 @@ def main(
     irt_l2: float = 1e-3,
     item_head_hidden_dim: int = 64,
     limit: int = 0,
+    artifact_suffix: str = "",
 ) -> None:
-    if item_encoder not in {"features", "lm"}:
-        raise ValueError("item_encoder must be one of: features, lm")
+    if item_encoder not in {"features", "lm", "bge-large"}:
+        raise ValueError("item_encoder must be one of: features, lm, bge-large")
 
     out = train_submit_remote.remote(
         item_encoder=item_encoder,
@@ -156,6 +162,7 @@ def main(
         irt_l2=irt_l2,
         item_head_hidden_dim=item_head_hidden_dim,
         limit=limit,
+        artifact_suffix=artifact_suffix,
     )
 
     local_artifact_path = LOCAL_ARTIFACT_DIR / out["artifact_name"]

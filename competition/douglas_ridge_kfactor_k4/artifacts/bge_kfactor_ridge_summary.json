@@ -1,0 +1,17 @@
+{
+  "blend_weight": 0.45,
+  "calibrator_features": 9,
+  "encoder": "BAAI/bge-large-en-v1.5",
+  "irt_epochs": 8,
+  "irt_l2": 0.001,
+  "irt_lr": 0.003,
+  "items": 103983,
+  "latent_dim": 4,
+  "logit_cap": 4.0,
+  "ridge_alpha": 300.0,
+  "ridge_heads": 5,
+  "ridge_targets_standardized": true,
+  "subjects": 909,
+  "text_item_targets": 103983,
+  "train_rows": 5361379
+}

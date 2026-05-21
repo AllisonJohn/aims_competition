@@ -1,0 +1,11 @@
+{
+  "epochs": 5,
+  "feature_dim": 38,
+  "global_rate": 0.6732577570061732,
+  "latent_dim": 8,
+  "learning_rate": 0.001,
+  "train_accuracy": 0.7565249800682068,
+  "train_bce": 0.5118761658668518,
+  "train_rows": 5361379,
+  "weight_decay": 0.0001
+}

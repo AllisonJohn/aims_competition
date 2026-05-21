@@ -1,0 +1,25 @@
+{
+  "blend_weight": 0.2,
+  "calibrator_features": 12,
+  "discrimination_mean": 1.326617956161499,
+  "discrimination_std": 0.4252466559410095,
+  "encoder": "BAAI/bge-large-en-v1.5",
+  "irt_epochs": 8,
+  "irt_items": 103983,
+  "irt_l2": 0.001,
+  "irt_lr": 0.003,
+  "irt_model": "2pl",
+  "irt_subjects": 909,
+  "item_head_epochs": 50,
+  "item_head_hidden_dim": 128,
+  "item_head_lr": 0.001,
+  "item_head_weight_decay": 0.0001,
+  "prior_weights": {
+    "benchmark": 0.0,
+    "condition": 0.0,
+    "item_adjustment": 0.0,
+    "subject": 1.0
+  },
+  "text_item_targets": 103983,
+  "train_rows": 5361379
+}

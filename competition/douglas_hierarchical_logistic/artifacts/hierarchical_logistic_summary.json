@@ -1,0 +1,7 @@
+{
+  "feature_dim": 38,
+  "global_rate": 0.6732577570061732,
+  "regularization_c": 1.0,
+  "train_accuracy": 0.7428857389115748,
+  "train_rows": 5361379
+}

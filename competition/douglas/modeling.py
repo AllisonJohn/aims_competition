@@ -155,6 +155,45 @@ class ModelSideEncoder(nn.Module):
         return self.field_value_means[field].get(key, self.field_default_means[field])
 
 
+class DirectModelLookupEncoder(nn.Module):
+    """Use fitted IRT model vectors directly for seen model IDs."""
+
+    model_encoder_type = "direct_lookup"
+
+    def __init__(
+        self,
+        model_vectors: torch.Tensor,
+        model_id_to_index: dict[str, int] | None = None,
+        name_to_index: dict[str, int] | None = None,
+        fallback_vector: torch.Tensor | None = None,
+    ) -> None:
+        super().__init__()
+        vectors = model_vectors.detach().clone().float()
+        self.register_buffer("model_vectors", vectors)
+        if fallback_vector is None:
+            fallback_vector = vectors.mean(dim=0) if len(vectors) else torch.zeros(1)
+        self.register_buffer("fallback_vector", fallback_vector.detach().clone().float())
+        self.model_id_to_index = dict(model_id_to_index or {})
+        self.name_to_index = dict(name_to_index or {})
+        self.num_models = int(vectors.shape[0])
+
+    def forward(self, metadata: dict) -> torch.Tensor:
+        index = self.lookup_index(metadata)
+        if index is None:
+            return self.fallback_vector
+        return self.model_vectors[index]
+
+    def lookup_index(self, metadata: dict) -> int | None:
+        for value, mapping in (
+            (metadata.get("model_id"), self.model_id_to_index),
+            (metadata.get("name"), self.name_to_index),
+        ):
+            key = normalize_metadata_value(value)
+            if key in mapping:
+                return mapping[key]
+        return None
+
+
 class ItemQuestionEncoder(nn.Module):
     """Encode each item sentence into loadings and bias.
 
@@ -513,6 +552,32 @@ def build_model_side_encoder(
     )
 
 
+def build_direct_model_lookup_encoder(
+    model_examples: list[dict],
+    model_vectors: torch.Tensor,
+) -> DirectModelLookupEncoder:
+    model_id_to_index = {}
+    name_to_index = {}
+    for index, metadata in enumerate(model_examples):
+        model_id = normalize_metadata_value(metadata.get("model_id"))
+        name = normalize_metadata_value(metadata.get("name"))
+        if model_id != MISSING_TOKEN:
+            model_id_to_index[model_id] = index
+        if name != MISSING_TOKEN:
+            name_to_index[name] = index
+
+    print(
+        f"Built direct model lookup for {len(model_examples)} models "
+        f"(model_id keys={len(model_id_to_index)}, name keys={len(name_to_index)}).",
+        flush=True,
+    )
+    return DirectModelLookupEncoder(
+        model_vectors=model_vectors,
+        model_id_to_index=model_id_to_index,
+        name_to_index=name_to_index,
+    )
+
+
 def save_checkpoint(
     path: Path,
     scorer: DouglasScorer,
@@ -535,24 +600,43 @@ def save_checkpoint(
         "item_head_residual",
         False,
     )
-    torch.save(
-        {
-            "config": saved_config,
-            "temperature": scorer.temperature,
-            "model_to_index": scorer.model_encoder.model_to_index,
-            "num_models": scorer.model_encoder.num_models,
-            "organization_to_index": scorer.model_encoder.organization_to_index,
-            "family_to_index": scorer.model_encoder.family_to_index,
-            "name_token_to_index": scorer.model_encoder.name_token_to_index,
-            "field_value_means": scorer.model_encoder.field_value_means,
-            "field_default_means": scorer.model_encoder.field_default_means,
-            "global_mean": scorer.model_encoder.global_mean,
-            "model_encoder_state_dict": scorer.model_encoder.state_dict(),
-            "item_heads_state_dict": {
-                "loading_head": scorer.item_encoder.loading_head.state_dict(),
-                "bias_head": scorer.item_encoder.bias_head.state_dict(),
-            },
+    saved_config["model_encoder_type"] = getattr(
+        scorer.model_encoder,
+        "model_encoder_type",
+        "metadata_projection",
+    )
+    payload = {
+        "config": saved_config,
+        "temperature": scorer.temperature,
+        "model_encoder_state_dict": scorer.model_encoder.state_dict(),
+        "item_heads_state_dict": {
+            "loading_head": scorer.item_encoder.loading_head.state_dict(),
+            "bias_head": scorer.item_encoder.bias_head.state_dict(),
         },
+    }
+    if isinstance(scorer.model_encoder, DirectModelLookupEncoder):
+        payload.update(
+            {
+                "model_id_to_index": scorer.model_encoder.model_id_to_index,
+                "name_to_index": scorer.model_encoder.name_to_index,
+                "num_models": scorer.model_encoder.num_models,
+            }
+        )
+    else:
+        payload.update(
+            {
+                "model_to_index": scorer.model_encoder.model_to_index,
+                "num_models": scorer.model_encoder.num_models,
+                "organization_to_index": scorer.model_encoder.organization_to_index,
+                "family_to_index": scorer.model_encoder.family_to_index,
+                "name_token_to_index": scorer.model_encoder.name_token_to_index,
+                "field_value_means": scorer.model_encoder.field_value_means,
+                "field_default_means": scorer.model_encoder.field_default_means,
+                "global_mean": scorer.model_encoder.global_mean,
+            }
+        )
+    torch.save(
+        payload,
         path,
     )
 
@@ -572,14 +656,25 @@ def load_checkpoint(
     item_encoder_type = config.get("item_encoder_type", "transformer")
     item_head_hidden_dim = int(config.get("item_head_hidden_dim", ITEM_HEAD_HIDDEN_DIM))
     item_head_residual = bool(config.get("item_head_residual", False))
-
-    model_encoder = ModelSideEncoder(
-        field_value_means=data.get("field_value_means"),
-        field_default_means=data.get("field_default_means"),
-        global_mean=float(data.get("global_mean", 0.5)),
-        p=p,
-        output_dim=k,
-    )
+    model_encoder_type = config.get("model_encoder_type", "metadata_projection")
+    if model_encoder_type == "direct_lookup":
+        state = data["model_encoder_state_dict"]
+        model_vectors = state["model_vectors"]
+        fallback_vector = state.get("fallback_vector")
+        model_encoder = DirectModelLookupEncoder(
+            model_vectors=model_vectors,
+            model_id_to_index=data.get("model_id_to_index", {}),
+            name_to_index=data.get("name_to_index", {}),
+            fallback_vector=fallback_vector,
+        )
+    else:
+        model_encoder = ModelSideEncoder(
+            field_value_means=data.get("field_value_means"),
+            field_default_means=data.get("field_default_means"),
+            global_mean=float(data.get("global_mean", 0.5)),
+            p=p,
+            output_dim=k,
+        )
     model_encoder.load_state_dict(data["model_encoder_state_dict"])
 
     item_encoder_cls = (

@@ -23,7 +23,7 @@ from competition.douglas.modeling import (  # noqa: E402
     ITEM_HEAD_RESIDUAL,
     DouglasScorer,
     ItemQuestionEncoder,
-    build_model_side_encoder,
+    build_direct_model_lookup_encoder,
     extract_left_model_metadata,
     extract_right_model_metadata,
     is_pairwise_input,
@@ -126,13 +126,12 @@ class DouglasModel:
         print("[stage 3/5] Fitting latent IRT factors...", flush=True)
         irt_model = self._fit_irt_factors(indexed)
 
-        print("[stage 4/5] Fitting metadata -> U_i predictor...", flush=True)
-        model_encoder = build_model_side_encoder(examples, p=self.p, output_dim=self.k).to(self.device)
-        self._fit_model_side_encoder(
-            model_encoder=model_encoder,
-            indexed=indexed,
-            irt_model=irt_model,
+        print("[stage 4/5] Building direct model-id -> learned U_i lookup...", flush=True)
+        model_encoder = build_direct_model_lookup_encoder(
+            model_examples=indexed["model_examples"],
+            model_vectors=irt_model.model_factors.weight.detach().cpu(),
         )
+        model_encoder = model_encoder.to(self.device)
 
         print("[stage 5/5] Fitting item content -> V_j,z_j predictor...", flush=True)
         print(

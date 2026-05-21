@@ -2,6 +2,7 @@
 # Submit from the Schmidt cluster after copying/cloning this repo there:
 #   sbatch competition/douglas/schmidt_train_submit.sh --item-encoder features
 #   sbatch competition/douglas/schmidt_train_submit.sh --item-encoder lm
+#   sbatch competition/douglas/schmidt_train_submit.sh --item-encoder bge-large
 
 #SBATCH --job-name=douglas-submit
 #SBATCH --output=%x-%j.out

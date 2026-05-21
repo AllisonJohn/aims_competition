@@ -1,0 +1,93 @@
+{
+  "encoder": "BAAI/bge-large-en-v1.5",
+  "eval_rows": 9999,
+  "global_label_mean": 0.5317558582106663,
+  "item_alpha": 1000.0,
+  "item_nonzero_coef": 1032,
+  "model_alpha": 0.1,
+  "model_nonzero_coef": 3,
+  "model_targets": 644,
+  "rasch_items": 17765,
+  "rasch_subjects": 644,
+  "sweep_results": [
+    {
+      "item_alpha": 100.0,
+      "model_alpha": 0.1,
+      "test_auc_roc": 0.6170454746467872,
+      "test_negative_log_loss": -0.694811676898097
+    },
+    {
+      "item_alpha": 100.0,
+      "model_alpha": 1.0,
+      "test_auc_roc": 0.61703562186928,
+      "test_negative_log_loss": -0.6948145255244584
+    },
+    {
+      "item_alpha": 100.0,
+      "model_alpha": 10.0,
+      "test_auc_roc": 0.616954324998128,
+      "test_negative_log_loss": -0.694843092534102
+    },
+    {
+      "item_alpha": 300.0,
+      "model_alpha": 0.1,
+      "test_auc_roc": 0.6226533548157489,
+      "test_negative_log_loss": -0.6786172793897062
+    },
+    {
+      "item_alpha": 300.0,
+      "model_alpha": 1.0,
+      "test_auc_roc": 0.6226482222060707,
+      "test_negative_log_loss": -0.6786198195451072
+    },
+    {
+      "item_alpha": 300.0,
+      "model_alpha": 10.0,
+      "test_auc_roc": 0.6225787944947995,
+      "test_negative_log_loss": -0.6786453209225624
+    },
+    {
+      "item_alpha": 1000.0,
+      "model_alpha": 0.1,
+      "test_auc_roc": 0.6314687494185716,
+      "test_negative_log_loss": -0.6658297227009522
+    },
+    {
+      "item_alpha": 1000.0,
+      "model_alpha": 1.0,
+      "test_auc_roc": 0.6314640750776147,
+      "test_negative_log_loss": -0.6658320807711315
+    },
+    {
+      "item_alpha": 1000.0,
+      "model_alpha": 10.0,
+      "test_auc_roc": 0.6313965720949727,
+      "test_negative_log_loss": -0.6658557679096311
+    }
+  ],
+  "test_auc_roc": 0.6314687494185716,
+  "test_benchmarks": [
+    "rewardbench",
+    "swebench",
+    "ultrafeedback"
+  ],
+  "test_negative_log_loss": -0.6658297227009522,
+  "text_item_targets": 5000,
+  "train_benchmarks": [
+    "afrimedqa",
+    "agentdojo",
+    "ai2d_test",
+    "androidworld",
+    "bfcl",
+    "cybench",
+    "hle",
+    "livecodebench",
+    "matharena",
+    "mathvista_mini",
+    "mmbench_v11",
+    "mmlupro",
+    "mtbench"
+  ],
+  "train_rows": 43614,
+  "validation_benchmarks": []
+}
