@@ -266,66 +266,53 @@ def _learned_factor_prediction(input: dict, factor_logit: float) -> float | None
     return _sigmoid(z)
 
 
-def _uncalibrated_prediction(input: dict) -> float:
-    base = _base_prediction(input)
-    latents = _predict_item_latents(input.get("item_content"))
-    if latents is None:
-        return base
-    item_factors, item_bias = latents
-    subject_factors = _subject_factor(input.get("subject_content"))
-    factor_logit = item_bias + sum(u * v for u, v in zip(subject_factors, item_factors))
-    factor_logit = max(-LOGIT_CAP, min(LOGIT_CAP, factor_logit))
-    learned_prediction = _learned_factor_prediction(input, factor_logit)
-    if learned_prediction is None:
-        blended_logit = (1.0 - BLEND_WEIGHT) * _logit(base) + BLEND_WEIGHT * factor_logit
-        return _sigmoid(blended_logit)
-    return learned_prediction
-
-
-def _online_logit_shift(input: dict, labeled: list[dict] | None) -> float:
+def _calibrate_with_labeled(prediction: float, input: dict, labeled: list[dict] | None) -> float:
     if not labeled:
-        return 0.0
+        return prediction
     subject_name = _parse_subject_name(input.get("subject_content"))
     condition = _key(input.get("condition") or "none")
-    observations = []
+    same_subject = []
+    same_condition = []
+    all_labels = []
     for example in labeled:
         if "label" not in example:
             continue
         label = _clamp(float(example["label"]), 0.0, 1.0)
-        probability = _uncalibrated_prediction(example)
-        weight = 1.0
+        all_labels.append(label)
         if _parse_subject_name(example.get("subject_content")) == subject_name:
-            weight += 0.5
+            same_subject.append(label)
         if _key(example.get("condition") or "none") == condition:
-            weight += 0.25
-        observations.append((_logit(probability), label, weight))
-    if not observations:
-        return 0.0
-
-    delta = 0.0
-    prior_variance = 0.7 * 0.7
-    for _ in range(6):
-        grad = delta / prior_variance
-        hess = 1.0 / prior_variance
-        for logit_value, label, weight in observations:
-            shifted = _sigmoid(logit_value + delta)
-            grad += weight * (shifted - label)
-            hess += weight * shifted * (1.0 - shifted)
-        if hess <= 1e-9:
-            break
-        delta -= grad / hess
-        delta = max(-1.5, min(1.5, delta))
-    return delta
-
-
-def _calibrate_with_labeled(prediction: float, input: dict, labeled: list[dict] | None) -> float:
-    delta = _online_logit_shift(input, labeled)
-    if delta == 0.0:
+            same_condition.append(label)
+    if same_subject:
+        labels = same_subject
+        weight = min(0.35, 0.12 + 0.06 * len(labels))
+    elif same_condition:
+        labels = same_condition
+        weight = min(0.25, 0.08 + 0.04 * len(labels))
+    elif all_labels:
+        labels = all_labels
+        weight = min(0.18, 0.06 + 0.02 * len(labels))
+    else:
         return prediction
-    return _clamp(_sigmoid(_logit(prediction) + delta))
+    observed = sum(labels) / len(labels)
+    return _clamp((1.0 - weight) * prediction + weight * observed)
 
 
 def predict(input: dict, labeled: list[dict] | None = None) -> float:
-    prediction = _uncalibrated_prediction(input)
+    base = _base_prediction(input)
+    latents = _predict_item_latents(input.get("item_content"))
+    if latents is None:
+        prediction = base
+    else:
+        item_factors, item_bias = latents
+        subject_factors = _subject_factor(input.get("subject_content"))
+        factor_logit = item_bias + sum(u * v for u, v in zip(subject_factors, item_factors))
+        factor_logit = max(-LOGIT_CAP, min(LOGIT_CAP, factor_logit))
+        learned_prediction = _learned_factor_prediction(input, factor_logit)
+        if learned_prediction is None:
+            blended_logit = (1.0 - BLEND_WEIGHT) * _logit(base) + BLEND_WEIGHT * factor_logit
+            prediction = _sigmoid(blended_logit)
+        else:
+            prediction = learned_prediction
     prediction = _calibrate_with_labeled(prediction, input, labeled)
     return float(_clamp(prediction))

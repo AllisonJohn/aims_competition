@@ -1,0 +1,466 @@
+{
+  "results": [
+    {
+      "adapted_brier": 0.21043413750230816,
+      "adapted_log_loss": 0.6144711507256957,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02144029270663117,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "uniform"
+    },
+    {
+      "adapted_brier": 0.2107114795613615,
+      "adapted_log_loss": 0.6145552723745612,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02135617105776566,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "confidence_soft"
+    },
+    {
+      "adapted_brier": 0.21052512647904922,
+      "adapted_log_loss": 0.6147254686200251,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.021185974812301778,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "middle"
+    },
+    {
+      "adapted_brier": 0.2107124599854714,
+      "adapted_log_loss": 0.6150149493369035,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02089649409542338,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "uniform"
+    },
+    {
+      "adapted_brier": 0.21063392940950074,
+      "adapted_log_loss": 0.6150203997699097,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02089104366241712,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "uncertainty_soft"
+    },
+    {
+      "adapted_brier": 0.2108019884191249,
+      "adapted_log_loss": 0.6152595731975706,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02065187023475623,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "middle"
+    },
+    {
+      "adapted_brier": 0.2111303822136869,
+      "adapted_log_loss": 0.6153977673203201,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.020513676112006718,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "confidence_soft"
+    },
+    {
+      "adapted_brier": 0.21096112516349452,
+      "adapted_log_loss": 0.615506382480166,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02040506095216088,
+      "eval_n": 1600,
+      "prior": 9.0,
+      "weight_mode": "uniform"
+    },
+    {
+      "adapted_brier": 0.2109069358572491,
+      "adapted_log_loss": 0.6155391257879831,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.020372317644343774,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "uncertainty_soft"
+    },
+    {
+      "adapted_brier": 0.21104899068895366,
+      "adapted_log_loss": 0.6157422190014645,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02016922443086233,
+      "eval_n": 1600,
+      "prior": 9.0,
+      "weight_mode": "middle"
+    },
+    {
+      "adapted_brier": 0.21091608537187645,
+      "adapted_log_loss": 0.6157565742735724,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.020154869158754418,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "uncertainty_strong"
+    },
+    {
+      "adapted_brier": 0.21118440034671862,
+      "adapted_log_loss": 0.6159504637298275,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019960979702499326,
+      "eval_n": 1600,
+      "prior": 10.0,
+      "weight_mode": "uniform"
+    },
+    {
+      "adapted_brier": 0.21115215706925972,
+      "adapted_log_loss": 0.6160248490719331,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.01988659436039375,
+      "eval_n": 1600,
+      "prior": 9.0,
+      "weight_mode": "uncertainty_soft"
+    },
+    {
+      "adapted_brier": 0.21150179420813622,
+      "adapted_log_loss": 0.6161661587226852,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019745284709641653,
+      "eval_n": 1600,
+      "prior": 9.0,
+      "weight_mode": "confidence_soft"
+    },
+    {
+      "adapted_brier": 0.2112740164017049,
+      "adapted_log_loss": 0.6162071594682431,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019704283964083746,
+      "eval_n": 1600,
+      "prior": 10.0,
+      "weight_mode": "middle"
+    },
+    {
+      "adapted_brier": 0.21117320352149277,
+      "adapted_log_loss": 0.6162361756991155,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019675267733211377,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "uncertainty_strong"
+    },
+    {
+      "adapted_brier": 0.21138824926434563,
+      "adapted_log_loss": 0.6163533079393924,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019558135492934503,
+      "eval_n": 1600,
+      "prior": 11.0,
+      "weight_mode": "uniform"
+    },
+    {
+      "adapted_brier": 0.21137625671768223,
+      "adapted_log_loss": 0.6164930990429627,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019418344389364184,
+      "eval_n": 1600,
+      "prior": 10.0,
+      "weight_mode": "uncertainty_soft"
+    },
+    {
+      "adapted_brier": 0.21147941154126076,
+      "adapted_log_loss": 0.6166097095323654,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019301733899961482,
+      "eval_n": 1600,
+      "prior": 11.0,
+      "weight_mode": "middle"
+    },
+    {
+      "adapted_brier": 0.21141090399851317,
+      "adapted_log_loss": 0.6167321171657802,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019179326266546615,
+      "eval_n": 1600,
+      "prior": 9.0,
+      "weight_mode": "uncertainty_strong"
+    },
+    {
+      "adapted_brier": 0.21141568653182852,
+      "adapted_log_loss": 0.6167733688900116,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.01913807454231531,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "anti_extreme"
+    },
+    {
+      "adapted_brier": 0.2116294185859148,
+      "adapted_log_loss": 0.616857065701459,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019054377730867822,
+      "eval_n": 1600,
+      "prior": 12.0,
+      "weight_mode": "uniform"
+    },
+    {
+      "adapted_brier": 0.2115818757700989,
+      "adapted_log_loss": 0.6168922294294029,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.019019214002923945,
+      "eval_n": 1600,
+      "prior": 11.0,
+      "weight_mode": "uncertainty_soft"
+    },
+    {
+      "adapted_brier": 0.2118401137837698,
+      "adapted_log_loss": 0.6169061810236705,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.01900526240865641,
+      "eval_n": 1600,
+      "prior": 10.0,
+      "weight_mode": "confidence_soft"
+    },
+    {
+      "adapted_brier": 0.21171958822538883,
+      "adapted_log_loss": 0.6171077862881823,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.01880365714414456,
+      "eval_n": 1600,
+      "prior": 12.0,
+      "weight_mode": "middle"
+    },
+    {
+      "adapted_brier": 0.21162412280354995,
+      "adapted_log_loss": 0.6171651869837081,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.018746256448618714,
+      "eval_n": 1600,
+      "prior": 10.0,
+      "weight_mode": "uncertainty_strong"
+    },
+    {
+      "adapted_brier": 0.2116657269840845,
+      "adapted_log_loss": 0.6172934099656139,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.01861803346671298,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "anti_extreme"
+    },
+    {
+      "adapted_brier": 0.21181992184957202,
+      "adapted_log_loss": 0.6173819502413075,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.018529493191019375,
+      "eval_n": 1600,
+      "prior": 12.0,
+      "weight_mode": "uncertainty_soft"
+    },
+    {
+      "adapted_brier": 0.2118251484501023,
+      "adapted_log_loss": 0.6175456760651457,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.018365767367181207,
+      "eval_n": 1600,
+      "prior": 11.0,
+      "weight_mode": "uncertainty_strong"
+    },
+    {
+      "adapted_brier": 0.21214531097658984,
+      "adapted_log_loss": 0.6175767347016042,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.018334708730722626,
+      "eval_n": 1600,
+      "prior": 11.0,
+      "weight_mode": "confidence_soft"
+    },
+    {
+      "adapted_brier": 0.21188987115027294,
+      "adapted_log_loss": 0.6177670123874663,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.01814443104486052,
+      "eval_n": 1600,
+      "prior": 9.0,
+      "weight_mode": "anti_extreme"
+    },
+    {
+      "adapted_brier": 0.21205469510970595,
+      "adapted_log_loss": 0.6180087995541194,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.017902643878207503,
+      "eval_n": 1600,
+      "prior": 12.0,
+      "weight_mode": "uncertainty_strong"
+    },
+    {
+      "adapted_brier": 0.21208502067732063,
+      "adapted_log_loss": 0.6181316669802769,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.017779776452049978,
+      "eval_n": 1600,
+      "prior": 10.0,
+      "weight_mode": "anti_extreme"
+    },
+    {
+      "adapted_brier": 0.2124214869007574,
+      "adapted_log_loss": 0.6181857715971555,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.017725671835171375,
+      "eval_n": 1600,
+      "prior": 12.0,
+      "weight_mode": "confidence_soft"
+    },
+    {
+      "adapted_brier": 0.21228363207120818,
+      "adapted_log_loss": 0.618516372740627,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.017395070691699877,
+      "eval_n": 1600,
+      "prior": 11.0,
+      "weight_mode": "anti_extreme"
+    },
+    {
+      "adapted_brier": 0.21248847206945926,
+      "adapted_log_loss": 0.6189101334873842,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.017001309944942644,
+      "eval_n": 1600,
+      "prior": 12.0,
+      "weight_mode": "anti_extreme"
+    }
+  ],
+  "top": [
+    {
+      "adapted_brier": 0.21043413750230816,
+      "adapted_log_loss": 0.6144711507256957,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02144029270663117,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "uniform"
+    },
+    {
+      "adapted_brier": 0.2107114795613615,
+      "adapted_log_loss": 0.6145552723745612,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02135617105776566,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "confidence_soft"
+    },
+    {
+      "adapted_brier": 0.21052512647904922,
+      "adapted_log_loss": 0.6147254686200251,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.021185974812301778,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "middle"
+    },
+    {
+      "adapted_brier": 0.2107124599854714,
+      "adapted_log_loss": 0.6150149493369035,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02089649409542338,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "uniform"
+    },
+    {
+      "adapted_brier": 0.21063392940950074,
+      "adapted_log_loss": 0.6150203997699097,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02089104366241712,
+      "eval_n": 1600,
+      "prior": 7.0,
+      "weight_mode": "uncertainty_soft"
+    },
+    {
+      "adapted_brier": 0.2108019884191249,
+      "adapted_log_loss": 0.6152595731975706,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02065187023475623,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "middle"
+    },
+    {
+      "adapted_brier": 0.2111303822136869,
+      "adapted_log_loss": 0.6153977673203201,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.020513676112006718,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "confidence_soft"
+    },
+    {
+      "adapted_brier": 0.21096112516349452,
+      "adapted_log_loss": 0.615506382480166,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02040506095216088,
+      "eval_n": 1600,
+      "prior": 9.0,
+      "weight_mode": "uniform"
+    },
+    {
+      "adapted_brier": 0.2109069358572491,
+      "adapted_log_loss": 0.6155391257879831,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.020372317644343774,
+      "eval_n": 1600,
+      "prior": 8.0,
+      "weight_mode": "uncertainty_soft"
+    },
+    {
+      "adapted_brier": 0.21104899068895366,
+      "adapted_log_loss": 0.6157422190014645,
+      "base_brier": 0.21996645738323445,
+      "base_log_loss": 0.6359114434323269,
+      "delta_log_loss": -0.02016922443086233,
+      "eval_n": 1600,
+      "prior": 9.0,
+      "weight_mode": "middle"
+    }
+  ]
+}

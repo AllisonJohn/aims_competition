@@ -48,12 +48,12 @@ def train_remote(
     item_limit: int = 120_000,
     encoder_id: str = "BAAI/bge-large-en-v1.5",
     latent_dim: int = 4,
-    irt_epochs: int = 5,
+    irt_epochs: int = 10,
     irt_lr: float = 3e-3,
     irt_l2: float = 1e-3,
     irt_batch_size: int = 8192,
     ridge_alpha: float = 300.0,
-    blend_weight: float = 0.45,
+    blend_weight: float = 0.2,
     logit_cap: float = 4.0,
 ) -> dict:
     import math
@@ -455,12 +455,12 @@ def main(
     item_limit: int = 120_000,
     encoder_id: str = "BAAI/bge-large-en-v1.5",
     latent_dim: int = 4,
-    irt_epochs: int = 5,
+    irt_epochs: int = 10,
     irt_lr: float = 3e-3,
     irt_l2: float = 1e-3,
     irt_batch_size: int = 8192,
     ridge_alpha: float = 300.0,
-    blend_weight: float = 0.45,
+    blend_weight: float = 0.2,
     logit_cap: float = 4.0,
 ) -> None:
     root = Path(__file__).resolve().parent
