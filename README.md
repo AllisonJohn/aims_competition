@@ -14,7 +14,7 @@ Benchmark scores increasingly gate deployment decisions but rarely predict how a
 Our strongest competition submission was the **K=3 BGE ridge IRT model with exact-root labeled residual calibration**. The submitted artifact is:
 
 ```text
-competition/ridge-k3-labeled-type-residual-exact-root.zip
+final-submission.zip
 ```
 
 The zip is self-contained at the submission root:
@@ -27,16 +27,6 @@ model.py
 models.txt
 requirements.txt
 ```
-
-Relevant source files:
-
-| Purpose                          | Path                                                                          |
-| -------------------------------- | ----------------------------------------------------------------------------- |
-| Exact-root inference code        | `competition/douglas_ridge_kfactor_k3_labeled_type_residual_exact/model.py`   |
-| Exact-root artifacts             | `competition/douglas_ridge_kfactor_k3_labeled_type_residual_exact/artifacts/` |
-| Base K=3 training script         | `competition/douglas_ridge_kfactor_k3/modal_train_kfactor_ridge.py`           |
-| Leave-one-benchmark sweep script | `competition/douglas_ridge_kfactor_k3/modal_sweep_leave_one_benchmark.py`     |
-| Validation sandbox utilities     | `competition/label_validation_sandbox/`                                       |
 
 ### Pipeline Summary
 
@@ -138,19 +128,6 @@ final_p = sigmoid(logit(raw_p) + total_delta)
 The base K=3 model already captured broad model ability, item difficulty, and item-skill interactions. The remaining error on hidden benchmarks was often local: a hidden benchmark could be globally easier/harder than expected, or specifically shifted for a category such as code, visual reasoning, or preference judgment. Exact-root used the five labeled examples as a small benchmark-specific survey and shrank the correction heavily to avoid overreacting.
 
 The best live variants were the exact-root residual versions around `-0.58`. More aggressive category-only, subject-only, neural residual, ensemble, refit, and active-labeling variants were usually worse. The main lesson is that the labeled examples helped most when used as a conservative same-benchmark residual, especially with category/subject matching as a small add-on.
-
-### Reproducibility Notes
-
-Verified paths as of this repository state:
-
-```bash
-python -m py_compile competition/douglas_ridge_kfactor_k3_labeled_type_residual_exact/model.py
-python -m py_compile competition/douglas_ridge_kfactor_k3/modal_train_kfactor_ridge.py
-python -m py_compile competition/douglas_ridge_kfactor_k3/modal_sweep_leave_one_benchmark.py
-unzip -l competition/ridge-k3-labeled-type-residual-exact-root.zip
-```
-
-The exact-root logic is implemented in `model.py`; there is no separate exact-root training script because it is a post-hoc inference calibration layer on top of the trained K=3 ridge artifact.
 
 ## Installation
 
