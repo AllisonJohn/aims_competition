@@ -1,6 +1,0 @@
-numpy
-pandas
-pyarrow
-scikit-learn
-huggingface_hub
-hf_xet

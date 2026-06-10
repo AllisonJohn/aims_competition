@@ -1,4 +1,0 @@
-# Advanced example: list one HuggingFace repo per line.
-# Keep the default hf_submission template if you only need one model.
-sentence-transformers/all-mpnet-base-v2
-sentence-transformers/all-MiniLM-L6-v2

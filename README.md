@@ -30,13 +30,13 @@ requirements.txt
 
 Relevant source files:
 
-| Purpose | Path |
-| --- | --- |
-| Exact-root inference code | `competition/douglas_ridge_kfactor_k3_labeled_type_residual_exact/model.py` |
-| Exact-root artifacts | `competition/douglas_ridge_kfactor_k3_labeled_type_residual_exact/artifacts/` |
-| Base K=3 training script | `competition/douglas_ridge_kfactor_k3/modal_train_kfactor_ridge.py` |
-| Leave-one-benchmark sweep script | `competition/douglas_ridge_kfactor_k3/modal_sweep_leave_one_benchmark.py` |
-| Validation sandbox utilities | `competition/label_validation_sandbox/` |
+| Purpose                          | Path                                                                          |
+| -------------------------------- | ----------------------------------------------------------------------------- |
+| Exact-root inference code        | `competition/douglas_ridge_kfactor_k3_labeled_type_residual_exact/model.py`   |
+| Exact-root artifacts             | `competition/douglas_ridge_kfactor_k3_labeled_type_residual_exact/artifacts/` |
+| Base K=3 training script         | `competition/douglas_ridge_kfactor_k3/modal_train_kfactor_ridge.py`           |
+| Leave-one-benchmark sweep script | `competition/douglas_ridge_kfactor_k3/modal_sweep_leave_one_benchmark.py`     |
+| Validation sandbox utilities     | `competition/label_validation_sandbox/`                                       |
 
 ### Pipeline Summary
 

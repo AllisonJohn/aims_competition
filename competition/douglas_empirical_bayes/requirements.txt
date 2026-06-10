@@ -1,5 +1,0 @@
-numpy
-pandas
-pyarrow
-huggingface_hub
-hf_xet
